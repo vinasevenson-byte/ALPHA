@@ -1,0 +1,101 @@
+// EXCERTO: mesclar no schema consolidado; Workspace/User/Account existentes NÃO são recriados.
+enum InvestmentAssetKind { CDB LCI LCA TESOURO_SELIC TESOURO_IPCA TESOURO_PREFIXADO FUND ETF STOCK OTHER }
+enum InvestmentOperationKind { BUY SELL DIVIDEND INTEREST FEE TAX AMORTIZATION MATURITY REVERSAL }
+enum InvestmentOperationStatus { PENDING SETTLED REVERSED }
+model InvestmentPortfolio {
+  id String @id @default(uuid())
+  workspaceId String
+  name String
+  currency String @default("BRL")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  assets InvestmentPosition[]
+  operations InvestmentOperation[]
+  @@index([workspaceId])
+}
+model InvestmentInstrument {
+  id String @id @default(uuid())
+  symbol String?
+  name String
+  kind InvestmentAssetKind
+  issuerId String?
+  currency String @default("BRL")
+  indexer String?
+  maturityDate DateTime?
+  lockupEnd DateTime?
+  metadata Json?
+  prices MarketPrice[]
+  @@index([symbol])
+}
+model InvestmentPosition {
+  id String @id @default(uuid())
+  workspaceId String
+  portfolioId String
+  portfolio InvestmentPortfolio @relation(fields:[portfolioId], references:[id])
+  instrumentId String
+  instrument InvestmentInstrument @relation(fields:[instrumentId], references:[id])
+  quantity Decimal @db.Decimal(28,10)
+  costBasis Decimal @db.Decimal(22,8)
+  updatedAt DateTime @updatedAt
+  @@unique([workspaceId,portfolioId,instrumentId])
+}
+model InvestmentOperation {
+  id String @id @default(uuid())
+  workspaceId String
+  portfolioId String
+  portfolio InvestmentPortfolio @relation(fields:[portfolioId], references:[id])
+  instrumentId String
+  kind InvestmentOperationKind
+  status InvestmentOperationStatus @default(PENDING)
+  quantity Decimal @db.Decimal(28,10)
+  grossAmount Decimal @db.Decimal(22,8)
+  fees Decimal @default(0) @db.Decimal(22,8)
+  taxes Decimal @default(0) @db.Decimal(22,8)
+  tradeDate DateTime
+  settlementDate DateTime?
+  cashAccountId String?
+  ledgerEntryId String?
+  idempotencyKey String
+  externalProvider String?
+  externalId String?
+  reversesOperationId String?
+  createdBy String
+  createdAt DateTime @default(now())
+  @@unique([workspaceId,idempotencyKey])
+  @@unique([workspaceId,externalProvider,externalId])
+  @@index([workspaceId,tradeDate])
+}
+model MarketPrice {
+  id String @id @default(uuid())
+  instrumentId String
+  instrument InvestmentInstrument @relation(fields:[instrumentId], references:[id])
+  price Decimal @db.Decimal(22,8)
+  currency String
+  asOf DateTime
+  retrievedAt DateTime @default(now())
+  provider String
+  type String
+  @@unique([instrumentId,provider,asOf,type])
+}
+model InvestmentScenario {
+  id String @id @default(uuid())
+  workspaceId String
+  name String
+  assumptions Json
+  resultSnapshot Json?
+  revision Int @default(1)
+  createdBy String
+  createdAt DateTime @default(now())
+  @@index([workspaceId])
+}
+model InvestmentAuditEvent {
+  id String @id @default(uuid())
+  workspaceId String
+  actorId String
+  action String
+  entityId String
+  requestId String
+  metadata Json?
+  occurredAt DateTime @default(now())
+  @@index([workspaceId,occurredAt])
+}

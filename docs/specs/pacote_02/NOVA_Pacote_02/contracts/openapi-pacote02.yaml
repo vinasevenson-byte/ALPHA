@@ -1,0 +1,205 @@
+openapi: 3.1.0
+info:
+  title: NOVA API — Pacote 02
+  version: 2.0.0
+  description: Contrato de referência parcial; complementar endpoints e segurança com API P01.
+servers:
+  - url: /v1
+security:
+  - cookieSession: []
+paths:
+  /workspaces/{workspaceId}/planning/overview:
+    get:
+      operationId: getPlanningOverview
+      summary: Indicadores de planejamento e projeção
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - in: query
+          name: from
+          schema: {type: string, format: date}
+        - in: query
+          name: to
+          schema: {type: string, format: date}
+      responses:
+        '200':
+          description: Indicadores calculados
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  asOf: {type: string, format: date-time}
+                  availableBalance: {$ref: '#/components/schemas/Money'}
+                  minForecastBalance: {$ref: '#/components/schemas/Money'}
+                  confidence: {type: string, enum: [HIGH, MEDIUM, LOW, INSUFFICIENT_DATA]}
+  /workspaces/{workspaceId}/planning/reserve-capacity:
+    get:
+      operationId: getReserveCapacity
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - in: query
+          name: horizonDays
+          schema: {type: integer, enum: [30, 60, 90], default: 90}
+      responses:
+        '200':
+          description: Capacidade calculada; não é consultoria de investimento
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReserveCapacity'}
+  /workspaces/{workspaceId}/obligations:
+    get:
+      operationId: listObligations
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - in: query
+          name: direction
+          required: true
+          schema: {type: string, enum: [PAYABLE, RECEIVABLE]}
+      responses:
+        '200': {description: Lista paginada de compromissos}
+    post:
+      operationId: createObligation
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [direction, title, installments]
+              properties:
+                direction: {type: string, enum: [PAYABLE, RECEIVABLE]}
+                title: {type: string, minLength: 1, maxLength: 180}
+                installments:
+                  type: array
+                  minItems: 1
+                  maxItems: 360
+                  items:
+                    type: object
+                    required: [dueOn, amount]
+                    properties:
+                      dueOn: {type: string, format: date}
+                      amount: {$ref: '#/components/schemas/Money'}
+      responses:
+        '201': {description: Compromisso criado}
+        '409': {description: Chave idempotente usada com conteúdo diferente}
+  /workspaces/{workspaceId}/obligations/{obligationId}/installments/{installmentId}/settlements:
+    post:
+      operationId: recordSettlement
+      description: Registra pagamento/recebimento EXTERNO; não realiza transação bancária.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: obligationId
+          required: true
+          schema: {type: string, format: uuid}
+        - in: path
+          name: installmentId
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accountId, amount, settledOn]
+              properties:
+                accountId: {type: string, format: uuid}
+                amount: {$ref: '#/components/schemas/Money'}
+                settledOn: {type: string, format: date}
+      responses:
+        '201': {description: Baixa atômica com transação P01}
+        '409': {description: Conflito de versão ou baixa acima do saldo aberto}
+  /workspaces/{workspaceId}/reserves:
+    get:
+      operationId: listReserves
+      parameters: [{$ref: '#/components/parameters/WorkspaceId'}]
+      responses:
+        '200': {description: Cofres do workspace}
+    post:
+      operationId: createReserve
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 120}
+                targetAmount: {$ref: '#/components/schemas/Money'}
+                targetOn: {type: string, format: date}
+      responses:
+        '201': {description: Cofre criado, sem movimentação bancária}
+  /workspaces/{workspaceId}/reserves/{reserveId}/allocations:
+    post:
+      operationId: allocateReserve
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - in: path
+          name: reserveId
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, expectedWorkspaceVersion]
+              properties:
+                amount: {$ref: '#/components/schemas/Money'}
+                expectedWorkspaceVersion: {type: integer, minimum: 0}
+      responses:
+        '201': {description: Alocação virtual registrada}
+        '409': {description: Saldo livre insuficiente ou versão desatualizada}
+  /workspaces/{workspaceId}/insights/alerts:
+    get:
+      operationId: listPlanningAlerts
+      parameters: [{$ref: '#/components/parameters/WorkspaceId'}]
+      responses:
+        '200': {description: Alertas do usuário/workspace}
+components:
+  securitySchemes:
+    cookieSession:
+      type: apiKey
+      in: cookie
+      name: nova_session
+  parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 8, maxLength: 128}
+  schemas:
+    Money:
+      type: string
+      pattern: '^[0-9]+(\.[0-9]{1,4})?$'
+      description: Decimal positivo, precisão máxima de quatro casas
+    ReserveCapacity:
+      type: object
+      required: [eligibleBalance, minForecastBalance, safetyBuffer, alreadyAllocated, overdueUncounted, headroom, confidence, explanations]
+      properties:
+        eligibleBalance: {$ref: '#/components/schemas/Money'}
+        minForecastBalance: {type: string}
+        safetyBuffer: {$ref: '#/components/schemas/Money'}
+        alreadyAllocated: {$ref: '#/components/schemas/Money'}
+        overdueUncounted: {$ref: '#/components/schemas/Money'}
+        headroom: {$ref: '#/components/schemas/Money'}
+        confidence: {type: string, enum: [HIGH, MEDIUM, LOW, INSUFFICIENT_DATA]}
+        explanations:
+          type: array
+          items: {type: string}

@@ -1,0 +1,166 @@
+// Referência de modelos adicionais P02. MESCLAR com schema P01 existente.
+// Prisma datasource/generator, User, Workspace, Transaction, Budget já existem no P01.
+// Campos workspaceId etc usam UUID string; ajustar relation fields conforme schema efetivo.
+
+enum ObligationDirection { PAYABLE RECEIVABLE }
+enum ObligationStatus { DRAFT ACTIVE CANCELED }
+enum InstallmentStatus { OPEN PARTIAL PAID CANCELED }
+enum ReserveKind { EMERGENCY TRAVEL TAX WORKING_CAPITAL EDUCATION GENERAL }
+enum ReserveStatus { ACTIVE PAUSED COMPLETED ARCHIVED }
+enum ReserveMovementKind { ALLOCATE RELEASE TRANSFER_IN TRANSFER_OUT }
+enum GoalStatus { ACTIVE PAUSED ACHIEVED ARCHIVED }
+enum AlertSeverity { INFO WARNING CRITICAL }
+enum AlertState { NEW READ DISMISSED RESOLVED }
+
+model NovaObligation {
+  id            String @id @default(uuid()) @db.Uuid
+  workspaceId   String @db.Uuid
+  direction     ObligationDirection
+  title         String
+  categoryId    String? @db.Uuid
+  counterpartyId String? @db.Uuid
+  status        ObligationStatus @default(ACTIVE)
+  version       Int @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  installments  NovaInstallment[]
+  @@index([workspaceId, direction, status])
+}
+
+model NovaInstallment {
+  id            String @id @default(uuid()) @db.Uuid
+  workspaceId   String @db.Uuid
+  obligationId  String @db.Uuid
+  obligation    NovaObligation @relation(fields: [obligationId], references: [id])
+  number        Int
+  dueOn         DateTime @db.Date
+  amount        Decimal @db.Decimal(19, 4)
+  status        InstallmentStatus @default(OPEN)
+  // Referência opcional para compromissos P01 existentes, sem criar nova transação.
+  sourceTransactionId String? @unique @db.Uuid
+  settlements   NovaSettlement[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@unique([obligationId, number])
+  @@index([workspaceId, dueOn, status])
+}
+
+model NovaSettlement {
+  id            String @id @default(uuid()) @db.Uuid
+  workspaceId   String @db.Uuid
+  installmentId String @db.Uuid
+  installment   NovaInstallment @relation(fields: [installmentId], references: [id])
+  // ID de transaction P01 liquidada. Relação FK deve ser adicionada após merge P01.
+  transactionId String @unique @db.Uuid
+  amount        Decimal @db.Decimal(19, 4)
+  settledOn     DateTime @db.Date
+  idempotencyKey String
+  createdAt     DateTime @default(now())
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, installmentId])
+}
+
+model NovaReserve {
+  id            String @id @default(uuid()) @db.Uuid
+  workspaceId   String @db.Uuid
+  name          String
+  kind          ReserveKind @default(GENERAL)
+  status        ReserveStatus @default(ACTIVE)
+  targetAmount  Decimal? @db.Decimal(19,4)
+  targetOn      DateTime? @db.Date
+  priority      Int @default(3)
+  version       Int @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  movements     NovaReserveMovement[]
+  goals         NovaGoal[]
+  @@index([workspaceId, status])
+}
+
+model NovaReserveMovement {
+  id             String @id @default(uuid()) @db.Uuid
+  workspaceId    String @db.Uuid
+  reserveId      String @db.Uuid
+  reserve        NovaReserve @relation(fields: [reserveId], references: [id])
+  kind           ReserveMovementKind
+  amount         Decimal @db.Decimal(19,4)
+  transferGroupId String? @db.Uuid
+  idempotencyKey String
+  actorId        String @db.Uuid
+  reason         String?
+  createdAt      DateTime @default(now())
+  @@unique([workspaceId, idempotencyKey, kind])
+  @@index([workspaceId, reserveId, createdAt])
+}
+
+model NovaGoal {
+  id           String @id @default(uuid()) @db.Uuid
+  workspaceId  String @db.Uuid
+  reserveId    String? @db.Uuid
+  reserve      NovaReserve? @relation(fields: [reserveId], references: [id])
+  name         String
+  targetAmount Decimal @db.Decimal(19,4)
+  targetOn     DateTime? @db.Date
+  status       GoalStatus @default(ACTIVE)
+  version      Int @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@index([workspaceId, status])
+}
+
+model NovaPlanningScenario {
+  id          String @id @default(uuid()) @db.Uuid
+  workspaceId String @db.Uuid
+  name        String
+  kind        String
+  // Validar JSON via contrato tipado; não aceitar chaves livres de execução.
+  assumptions Json
+  createdBy   String @db.Uuid
+  expiresAt   DateTime?
+  version     Int @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([workspaceId, kind])
+}
+
+model NovaBudgetPolicy {
+  id          String @id @default(uuid()) @db.Uuid
+  workspaceId String @db.Uuid
+  budgetId    String @unique @db.Uuid
+  warnOnly    Boolean @default(true)
+  carryOver   Boolean @default(false)
+  thresholds  Json
+  costCenterId String? @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([workspaceId])
+}
+
+model NovaAlert {
+  id          String @id @default(uuid()) @db.Uuid
+  workspaceId String @db.Uuid
+  type        String
+  severity    AlertSeverity
+  fingerprint String
+  sourceRef   String?
+  state       AlertState @default(NEW)
+  occurrenceOn DateTime @db.Date
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@unique([workspaceId, fingerprint])
+  @@index([workspaceId, state, occurrenceOn])
+}
+
+model NovaAlertPreference {
+  id          String @id @default(uuid()) @db.Uuid
+  workspaceId String @db.Uuid
+  userId      String @db.Uuid
+  type        String
+  active      Boolean @default(true)
+  leadDays    Json
+  channels    Json
+  quietHours  Json?
+  updatedAt   DateTime @updatedAt
+  @@unique([workspaceId, userId, type])
+}
