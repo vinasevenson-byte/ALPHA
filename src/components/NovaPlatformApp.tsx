@@ -40,6 +40,8 @@ import {
   X,
   Activity,
   PieChart,
+  Link2,
+  Bot,
 } from "lucide-react";
 import {
   centsToDecimalString,
@@ -49,9 +51,20 @@ import {
 import {
   NovaInvestmentsP03View,
   PositionRow,
-  SAMPLE_P03_POSITIONS,
   computePortfolioSummary,
 } from "@/components/NovaInvestmentsP03View";
+import {
+  NovaIntelligenceP04View,
+  P04HealthIndexPayload,
+  P04QualityPayload,
+  FinancialInsightItem,
+  FinancialConnectionItem,
+  ImportBatchItem,
+  ImportedTransactionItem,
+  ConsentAuditItem,
+  P04IntelSubTab,
+  P04IntegrationSubTab,
+} from "@/components/NovaIntelligenceP04View";
 
 export type NovaRouteKey =
   | "visao-geral"
@@ -68,9 +81,18 @@ export type NovaRouteKey =
   | "reservas"
   | "investimentos"
   | "simulacoes"
+  | "inteligencia"
   | "inteligencia/alertas"
+  | "inteligencia/assistente"
+  | "inteligencia/saude-dados"
   | "inteligencia/diagnostico"
+  | "integracoes"
+  | "integracoes/conexoes"
+  | "integracoes/importacoes"
+  | "integracoes/conciliacao"
+  | "integracoes/consentimentos"
   | "relatorios"
+  | "auditoria"
   | "configuracoes";
 
 interface WorkspaceItem {
@@ -243,6 +265,37 @@ interface NovaStatePayload {
   goals: GoalItem[];
   budgets: BudgetItem[];
   scenarios: ScenarioItem[];
+  investmentPositions?: Array<{
+    id: string;
+    symbol: string;
+    name: string;
+    kind: PositionRow["kind"];
+    institution: string;
+    indexer: string;
+    rateLabel: string;
+    costBasisCents: number;
+    currentGrossCents: number;
+    daysHeld: number;
+    redemptionAvailableAt: string;
+    maturityDate: string;
+    fgcEligible: boolean;
+    quoteStatus: "VALID" | "STALE";
+  }>;
+  financialConnections?: FinancialConnectionItem[];
+  importBatches?: ImportBatchItem[];
+  importedTransactions?: ImportedTransactionItem[];
+  financialInsights?: FinancialInsightItem[];
+  consentAudits?: ConsentAuditItem[];
+  p04Intelligence?: {
+    healthIndex: P04HealthIndexPayload | null;
+    quality: P04QualityPayload;
+    savingsRatePct: number | null;
+    featureFlags: {
+      openFinanceEnabled: boolean;
+      aiAssistantEnabled: boolean;
+      externalMarketDataEnabled: boolean;
+    };
+  };
   alerts: AlertItem[];
   auditEvents: AuditEventItem[];
   kpis: {
@@ -309,6 +362,7 @@ export function NovaPlatformApp({
   const [planningExpanded, setPlanningExpanded] = useState(false);
   const [reservasExpanded, setReservasExpanded] = useState(false);
   const [intelExpanded, setIntelExpanded] = useState(false);
+  const [integracoesExpanded, setIntegracoesExpanded] = useState(false);
 
   // Integração Automática com a Carteira de Investimentos (Pacote 03)
   const [investmentPositions, setInvestmentPositions] = useState<PositionRow[]>(
@@ -413,6 +467,43 @@ export function NovaPlatformApp({
           return;
         }
         setState(json);
+        if (Array.isArray(json.investmentPositions)) {
+          setInvestmentPositions(
+            json.investmentPositions.map(
+              (pos: {
+                id: string;
+                symbol: string;
+                name: string;
+                kind: PositionRow["kind"];
+                institution: string;
+                indexer: string;
+                rateLabel: string;
+                costBasisCents: number;
+                currentGrossCents: number;
+                daysHeld: number;
+                redemptionAvailableAt: string;
+                maturityDate: string;
+                fgcEligible: boolean;
+                quoteStatus: "VALID" | "STALE";
+              }) => ({
+                id: pos.id,
+                symbol: pos.symbol,
+                name: pos.name,
+                kind: pos.kind,
+                institution: pos.institution,
+                indexer: pos.indexer,
+                rateLabel: pos.rateLabel,
+                costBasisReais: pos.costBasisCents / 100,
+                currentGrossReais: pos.currentGrossCents / 100,
+                daysHeld: pos.daysHeld,
+                redemptionAvailableAt: pos.redemptionAvailableAt,
+                maturityDate: pos.maturityDate,
+                fgcEligible: pos.fgcEligible,
+                quoteStatus: pos.quoteStatus,
+              })
+            )
+          );
+        }
         setBufferInputDecimal(
           centsToDecimalString(json.activeWorkspace.safetyBufferCents)
         );
@@ -540,6 +631,9 @@ export function NovaPlatformApp({
 
   const healthScore = (() => {
     if (isZeroState) return null;
+    if (state.p04Intelligence?.healthIndex) {
+      return state.p04Intelligence.healthIndex.totalScore;
+    }
     let score = 60;
     if (kpis.minForecastBalanceCents >= 0) score += 15;
     if (kpis.minForecastBalanceCents >= kpis.safetyBufferCents) score += 10;
@@ -889,15 +983,15 @@ export function NovaPlatformApp({
         {!isCompactMode && <span>Simulações</span>}
       </button>
 
-      {/* 9. Inteligência Financeira */}
+      {/* 9. Inteligência Financeira (Pacote 04) */}
       <div>
         <button
           onClick={() => {
             if (isCompactMode) {
-              navigateRoute("inteligencia/alertas");
+              navigateRoute("inteligencia");
             } else {
               setIntelExpanded(!intelExpanded);
-              navigateRoute("inteligencia/alertas");
+              navigateRoute("inteligencia");
             }
           }}
           title="Inteligência Financeira"
@@ -921,6 +1015,17 @@ export function NovaPlatformApp({
         {!isCompactMode && intelExpanded && (
           <div className="ml-4 mt-1 space-y-1 border-l border-slate-200 pl-3">
             <button
+              onClick={() => navigateRoute("inteligencia")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
+                activeRoute === "inteligencia" ||
+                activeRoute === "inteligencia/diagnostico"
+                  ? "bg-[#EFEFFD] font-bold text-[#6C5CE7]"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Saúde Financeira &amp; Insights
+            </button>
+            <button
               onClick={() => navigateRoute("inteligencia/alertas")}
               className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
                 activeRoute === "inteligencia/alertas"
@@ -931,20 +1036,106 @@ export function NovaPlatformApp({
               Central de Alertas ({alerts.length})
             </button>
             <button
-              onClick={() => navigateRoute("inteligencia/diagnostico")}
+              onClick={() => navigateRoute("inteligencia/assistente")}
               className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
-                activeRoute === "inteligencia/diagnostico"
+                activeRoute === "inteligencia/assistente"
                   ? "bg-[#EFEFFD] font-bold text-[#6C5CE7]"
                   : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
               }`}
             >
-              Diagnóstico do Mês
+              Assistente IA Contextual
+            </button>
+            <button
+              onClick={() => navigateRoute("inteligencia/saude-dados")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
+                activeRoute === "inteligencia/saude-dados"
+                  ? "bg-[#EFEFFD] font-bold text-[#6C5CE7]"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Qualidade dos Dados
             </button>
           </div>
         )}
       </div>
 
-      {/* 10. Relatórios */}
+      {/* 10. Integrações Bancárias & Conciliação (Pacote 04) */}
+      <div>
+        <button
+          onClick={() => {
+            if (isCompactMode) {
+              navigateRoute("integracoes");
+            } else {
+              setIntegracoesExpanded(!integracoesExpanded);
+              navigateRoute("integracoes");
+            }
+          }}
+          title="Integrações & Open Finance"
+          className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 font-semibold transition ${
+            activeRoute.startsWith("integracoes")
+              ? "bg-[#6C5CE7] text-white shadow-sm"
+              : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+          }`}
+        >
+          <span className="flex items-center gap-3">
+            <Link2 className="h-4 w-4 shrink-0" />
+            {!isCompactMode && <span>Integrações (P04)</span>}
+          </span>
+          {!isCompactMode &&
+            (integracoesExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ))}
+        </button>
+        {!isCompactMode && integracoesExpanded && (
+          <div className="ml-4 mt-1 space-y-1 border-l border-slate-200 pl-3">
+            <button
+              onClick={() => navigateRoute("integracoes/conexoes")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
+                activeRoute === "integracoes" ||
+                activeRoute === "integracoes/conexoes"
+                  ? "bg-[#EFEFFD] font-bold text-[#6C5CE7]"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Conexões Open Finance
+            </button>
+            <button
+              onClick={() => navigateRoute("integracoes/importacoes")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
+                activeRoute === "integracoes/importacoes"
+                  ? "bg-[#EFEFFD] font-bold text-[#6C5CE7]"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Importar Extrato CSV/OFX
+            </button>
+            <button
+              onClick={() => navigateRoute("integracoes/conciliacao")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
+                activeRoute === "integracoes/conciliacao"
+                  ? "bg-[#EFEFFD] font-bold text-[#6C5CE7]"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Fila de Conciliação
+            </button>
+            <button
+              onClick={() => navigateRoute("integracoes/consentimentos")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
+                activeRoute === "integracoes/consentimentos"
+                  ? "bg-[#EFEFFD] font-bold text-[#6C5CE7]"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Consentimentos LGPD
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 11. Relatórios */}
       <button
         onClick={() => navigateRoute("relatorios")}
         title="Relatórios"
@@ -958,18 +1149,18 @@ export function NovaPlatformApp({
         {!isCompactMode && <span>Relatórios</span>}
       </button>
 
-      {/* 11. Administração */}
+      {/* 12. Administração & Auditoria */}
       <button
         onClick={() => navigateRoute("configuracoes")}
         title="Administração"
         className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 font-semibold transition ${
-          activeRoute === "configuracoes"
+          activeRoute === "configuracoes" || activeRoute === "auditoria"
             ? "bg-[#6C5CE7] text-white shadow-sm"
             : "text-slate-600 hover:bg-[#EFEFFD]/70 hover:text-[#6C5CE7]"
         }`}
       >
         <Settings className="h-4 w-4 shrink-0" />
-        {!isCompactMode && <span>Administração</span>}
+        {!isCompactMode && <span>Administração &amp; Auditoria</span>}
       </button>
     </nav>
   );
@@ -997,11 +1188,11 @@ export function NovaPlatformApp({
                     NOVA
                   </span>
                   <span className="rounded-full bg-[#EFEFFD] px-2 py-0.5 text-[10px] font-bold text-[#6C5CE7]">
-                    v3.0
+                    v4.0
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-500">
-                  Portfolio &amp; Finance
+                  Portfolio &amp; Intelligence
                 </p>
               </div>
             )}
@@ -1188,18 +1379,17 @@ export function NovaPlatformApp({
                 />
               </div>
 
-              {/* Botão de Homologação Integrada (P01 + P02 + P03) ou Zerar */}
+              {/* Botão de Homologação Integrada (P01 + P02 + P03 + P04) ou Zerar */}
               {isZeroState ? (
                 <button
                   onClick={async () => {
                     await executeAction(
                       { action: "LOAD_P02_FIXTURE" },
-                      "Ambiente de homologação carregado (Financeiro P01 + Planejamento P02 + Carteira P03)."
+                      "Ambiente de homologação carregado (P01 Financeiro + P02 Planejamento + P03 Investimentos + P04 Inteligência & Open Finance)."
                     );
-                    setInvestmentPositions(SAMPLE_P03_POSITIONS);
                   }}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-[#6C5CE7]/25 bg-[#EFEFFD] px-3 py-1.5 text-xs font-bold text-[#6C5CE7] transition hover:bg-[#6C5CE7]/15"
-                  title="Carrega dados de teste integrados dos Pacotes 01, 02 e 03"
+                  title="Carrega dados de teste integrados dos Pacotes 01, 02, 03 e 04 no banco de dados"
                 >
                   <Beaker className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">Carregar Dados de Teste</span>
@@ -1479,12 +1669,14 @@ export function NovaPlatformApp({
                         </button>
                         <button
                           onClick={async () => {
-                            await executeAction({ action: "LOAD_P02_FIXTURE" });
-                            setInvestmentPositions(SAMPLE_P03_POSITIONS);
+                            await executeAction(
+                              { action: "LOAD_P02_FIXTURE" },
+                              "Ambiente de homologação carregado (P01 + P02 + P03 + P04)."
+                            );
                           }}
                           className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-4 py-2 text-xs font-semibold text-[#1E1B39] hover:border-[#6C5CE7]"
                         >
-                          Carregar Cenário Homologado (P01+P02+P03)
+                          Carregar Cenário Homologado (P01+P02+P03+P04)
                         </button>
                       </div>
                     </div>
@@ -2804,54 +2996,62 @@ export function NovaPlatformApp({
           )}
 
           {/* =================================================================
-              TELAS J & K (P02): INTELIGÊNCIA FINANCEIRA (ALERTAS E DIAGNÓSTICO)
+              PACOTE 04: INTELIGÊNCIA FINANCEIRA, ASSISTENTE IA & INTEGRAÇÕES
              ================================================================= */}
-          {activeRoute.startsWith("inteligencia") && (
-            <div className="space-y-6">
-              <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
-                <h2 className="text-lg font-extrabold text-[#1E1B39]">
-                  Inteligência Financeira — Alertas e Diagnóstico (P02)
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Linguagem explicável, rastreável e integrada com fluxo de
-                  caixa, reservas e investimentos.
-                </p>
-
-                <div className="mt-4 space-y-3">
-                  {alerts.length === 0 ? (
-                    <div className="rounded-xl bg-[#F5F6FA] p-6 text-center text-xs text-slate-500">
-                      Nenhum alerta crítico ou pendente no horizonte atual.
-                    </div>
-                  ) : (
-                    alerts.map((al) => (
-                      <div
-                        key={al.id}
-                        className={`rounded-xl border p-4 ${
-                          al.severity === "CRITICAL"
-                            ? "border-rose-300 bg-rose-50"
-                            : "border-violet-200 bg-[#EFEFFD]/50"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-mono text-[10px] font-bold uppercase text-[#6C5CE7]">
-                            {al.type} • {al.severity}
-                          </span>
-                          <span className="text-[11px] text-slate-500">
-                            {formatDateBR(al.occurrenceOn)}
-                          </span>
-                        </div>
-                        <h4 className="mt-1 text-sm font-bold text-[#1E1B39]">
-                          {al.title}
-                        </h4>
-                        <p className="mt-0.5 text-xs text-slate-700">
-                          {al.message}
-                        </p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
+          {(activeRoute.startsWith("inteligencia") ||
+            activeRoute.startsWith("integracoes")) && (
+            <NovaIntelligenceP04View
+              workspaceId={activeWorkspace.id}
+              workspaceName={activeWorkspace.name}
+              workspaceType={activeWorkspace.type}
+              sectionMode={
+                activeRoute.startsWith("integracoes")
+                  ? "integracoes"
+                  : "inteligencia"
+              }
+              initialIntelTab={
+                (activeRoute === "inteligencia/alertas"
+                  ? "alertas"
+                  : activeRoute === "inteligencia/assistente"
+                  ? "assistente"
+                  : activeRoute === "inteligencia/saude-dados"
+                  ? "saude-dados"
+                  : "visao") as P04IntelSubTab
+              }
+              initialIntegrationTab={
+                (activeRoute === "integracoes/importacoes"
+                  ? "importacoes"
+                  : activeRoute === "integracoes/conciliacao"
+                  ? "conciliacao"
+                  : activeRoute === "integracoes/consentimentos"
+                  ? "consentimentos"
+                  : "conexoes") as P04IntegrationSubTab
+              }
+              accounts={accounts}
+              healthIndex={state.p04Intelligence?.healthIndex ?? null}
+              quality={
+                state.p04Intelligence?.quality ?? {
+                  status: "INSUFFICIENT_DATA",
+                  reasons: ["NO_ACCOUNTS"],
+                }
+              }
+              savingsRatePct={state.p04Intelligence?.savingsRatePct ?? null}
+              featureFlags={
+                state.p04Intelligence?.featureFlags ?? {
+                  openFinanceEnabled: false,
+                  aiAssistantEnabled: true,
+                  externalMarketDataEnabled: true,
+                }
+              }
+              insights={state.financialInsights ?? []}
+              alerts={alerts}
+              connections={state.financialConnections ?? []}
+              importBatches={state.importBatches ?? []}
+              importedTransactions={state.importedTransactions ?? []}
+              consentAudits={state.consentAudits ?? []}
+              onExecuteAction={executeAction}
+              onNavigateRoute={(r) => navigateRoute(r as NovaRouteKey)}
+            />
           )}
 
           {/* =================================================================
@@ -2901,7 +3101,7 @@ export function NovaPlatformApp({
           {/* =================================================================
               TELA M: ADMINISTRAÇÃO E PERMISSÕES RBAC
              ================================================================= */}
-          {activeRoute === "configuracoes" && (
+          {(activeRoute === "configuracoes" || activeRoute === "auditoria") && (
             <div className="space-y-6">
               <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
                 <h2 className="text-lg font-extrabold text-[#1E1B39]">
@@ -2972,6 +3172,7 @@ export function NovaPlatformApp({
               }
               positions={investmentPositions}
               onPositionsChange={setInvestmentPositions}
+              onPersistAction={executeAction}
               workspaceHeadroomCents={kpis.headroomCents}
               workspaceReservesCents={kpis.totalAllocatedReservesCents}
               workspaceEligibleBalanceCents={kpis.eligibleBalanceCents}

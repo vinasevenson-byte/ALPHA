@@ -169,6 +169,10 @@ interface Props {
   activeSubTab?: P03TabKey;
   positions?: PositionRow[];
   onPositionsChange?: (next: PositionRow[]) => void;
+  onPersistAction?: (
+    payload: Record<string, unknown>,
+    successMsg?: string
+  ) => Promise<boolean>;
   workspaceHeadroomCents?: number;
   workspaceReservesCents?: number;
   workspaceEligibleBalanceCents?: number;
@@ -181,6 +185,7 @@ export function NovaInvestmentsP03View({
   activeSubTab = "visao-geral",
   positions: controlledPositions,
   onPositionsChange,
+  onPersistAction,
   workspaceHeadroomCents = 0,
   workspaceReservesCents = 0,
   workspaceEligibleBalanceCents = 0,
@@ -244,8 +249,26 @@ export function NovaInvestmentsP03View({
     [positions, workspaceType]
   );
 
-  const loadSamplePortfolioP03 = () => {
+  const loadSamplePortfolioP03 = async () => {
+    if (onPersistAction) {
+      await onPersistAction(
+        { action: "LOAD_P03_FIXTURE" },
+        "Carteira de Homologação (Pacote 03) persistida no banco de dados."
+      );
+      return;
+    }
     updatePositions(SAMPLE_P03_POSITIONS);
+  };
+
+  const clearPortfolioP03 = async () => {
+    if (onPersistAction) {
+      await onPersistAction(
+        { action: "CLEAR_INVESTMENTS" },
+        "Carteira de investimentos zerada (R$ 0,00)."
+      );
+      return;
+    }
+    updatePositions([]);
   };
 
   return (
@@ -290,7 +313,7 @@ export function NovaInvestmentsP03View({
               </button>
             ) : (
               <button
-                onClick={() => updatePositions([])}
+                onClick={clearPortfolioP03}
                 className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
               >
                 Zerar Carteira (R$ 0,00)
@@ -790,9 +813,30 @@ export function NovaInvestmentsP03View({
         subTab === "fontes") && (
         <div className="space-y-4">
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
               if (!newName.trim()) return;
+              if (onPersistAction) {
+                const ok = await onPersistAction(
+                  {
+                    action: "CREATE_INVESTMENT_POSITION",
+                    symbol: newKind,
+                    name: newName,
+                    kind: newKind,
+                    institution: newInst,
+                    indexer: "CDI/SELIC",
+                    rateLabel: newRateLabel,
+                    costBasisCents: Math.round(newCostReais * 100),
+                    currentGrossCents: Math.round(newGrossReais * 100),
+                    daysHeld: newDays,
+                    redemptionAvailableAt: "2026-01-01",
+                    maturityDate: "2028-12-01",
+                  },
+                  "Posição de investimento registrada no banco de dados."
+                );
+                if (ok) setNewName("");
+                return;
+              }
               updatePositions([
                 ...positions,
                 {

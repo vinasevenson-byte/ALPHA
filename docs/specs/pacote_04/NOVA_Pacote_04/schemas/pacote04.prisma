@@ -1,0 +1,78 @@
+// FRAGMENTO DE REFERÊNCIA. Integrar ao schema central e revisar relações.
+// Workspace e User devem ser modelos já existentes do Pacote 01.
+model FinancialConnection {
+ id String @id @default(uuid())
+ workspaceId String
+ providerCode String
+ status String // enum no schema final
+ consentId String?
+ consentExpiresAt DateTime?
+ lastSyncAt DateTime?
+ lastErrorCode String?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ @@index([workspaceId,status])
+ @@unique([workspaceId,providerCode,id])
+}
+model ImportBatch {
+ id String @id @default(uuid())
+ workspaceId String
+ connectionId String?
+ sourceType String
+ state String // UPLOADED, VALIDATED, REVIEWING, COMMITTED, REJECTED
+ inputChecksum String
+ createdBy String
+ createdAt DateTime @default(now())
+ committedAt DateTime?
+ @@index([workspaceId,state,createdAt])
+}
+model ImportedExternalTransaction {
+ id String @id @default(uuid())
+ workspaceId String
+ providerId String
+ accountExternalId String
+ externalId String
+ rawHash String
+ importBatchId String
+ state String // STAGED, MATCHED, IMPORTED, IGNORED
+ matchedLedgerEntryId String?
+ @@unique([workspaceId,providerId,accountExternalId,externalId])
+ @@index([workspaceId,importBatchId])
+}
+model FinancialInsight {
+ id String @id @default(uuid())
+ workspaceId String
+ code String
+ severity String
+ state String // NEW, READ, DISMISSED, COMPLETED
+ title String
+ explanation String
+ evidenceJson Json
+ asOf DateTime
+ sourceVersion String
+ dedupeKey String
+ createdAt DateTime @default(now())
+ @@unique([workspaceId,dedupeKey])
+ @@index([workspaceId,state,createdAt])
+}
+model FinancialNotificationPreference {
+ id String @id @default(uuid())
+ workspaceId String
+ userId String
+ channel String
+ eventType String
+ enabled Boolean @default(false)
+ updatedAt DateTime @updatedAt
+ @@unique([workspaceId,userId,channel,eventType])
+}
+model FinancialConsentAudit {
+ id String @id @default(uuid())
+ workspaceId String
+ connectionId String
+ actorId String
+ action String // GRANTED, SCOPE_CHANGED, EXPIRED, REVOKED
+ scopesJson Json
+ eventAt DateTime @default(now())
+ requestId String
+ @@index([workspaceId,connectionId,eventAt])
+}

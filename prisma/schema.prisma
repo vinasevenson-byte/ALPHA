@@ -18,31 +18,38 @@ model User {
 }
 
 model Workspace {
-  id                String                 @id @default(uuid())
-  type              String                 // "PERSONAL" | "BUSINESS"
-  name              String
-  baseCurrency      String                 @default("BRL")
-  timezone          String                 @default("America/Sao_Paulo")
-  safetyBufferCents Int                    @default(0) // Começa em R$ 0,00 conforme P01/P02
-  version           Int                    @default(1)
-  createdAt         DateTime               @default(now())
-  updatedAt         DateTime               @updatedAt
-  memberships       Membership[]
-  accounts          Account[]
-  categories        Category[]
-  counterparties    Counterparty[]
-  transactions      Transaction[]
-  recurrences       Recurrence[]
-  budgets           Budget[]
-  obligations       NovaObligation[]
-  installments      NovaInstallment[]
-  settlements       NovaSettlement[]
-  reserves          NovaReserve[]
-  reserveMovements  NovaReserveMovement[]
-  goals             NovaGoal[]
-  scenarios         NovaPlanningScenario[]
-  alerts            NovaAlert[]
-  auditEvents       AuditEvent[]
+  id                      String                            @id @default(uuid())
+  type                    String                            // "PERSONAL" | "BUSINESS"
+  name                    String
+  baseCurrency            String                            @default("BRL")
+  timezone                String                            @default("America/Sao_Paulo")
+  safetyBufferCents       Int                               @default(0) // Começa em R$ 0,00 conforme P01/P02
+  version                 Int                               @default(1)
+  createdAt               DateTime                          @default(now())
+  updatedAt               DateTime                          @updatedAt
+  memberships             Membership[]
+  accounts                Account[]
+  categories              Category[]
+  counterparties          Counterparty[]
+  transactions            Transaction[]
+  recurrences             Recurrence[]
+  budgets                 Budget[]
+  obligations             NovaObligation[]
+  installments            NovaInstallment[]
+  settlements             NovaSettlement[]
+  reserves                NovaReserve[]
+  reserveMovements        NovaReserveMovement[]
+  goals                   NovaGoal[]
+  scenarios               NovaPlanningScenario[]
+  alerts                  NovaAlert[]
+  auditEvents             AuditEvent[]
+  investmentPositions     NovaInvestmentPosition[]
+  financialConnections    FinancialConnection[]
+  importBatches           ImportBatch[]
+  importedTransactions    ImportedExternalTransaction[]
+  financialInsights       FinancialInsight[]
+  notificationPreferences FinancialNotificationPreference[]
+  consentAudits           FinancialConsentAudit[]
 }
 
 model Membership {
@@ -327,4 +334,135 @@ model AuditEvent {
   timestamp    DateTime  @default(now())
 
   @@index([workspaceId, timestamp])
+}
+
+// ============================================================================
+// PACOTE 03: POSIÇÕES DE INVESTIMENTO PERSISTIDAS POR WORKSPACE
+// ============================================================================
+model NovaInvestmentPosition {
+  id                    String    @id @default(uuid())
+  workspaceId           String
+  workspace             Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  symbol                String
+  name                  String
+  kind                  String    // "TESOURO_SELIC" | "CDB" | "LCI" | "LCA" | "TESOURO_IPCA" | "TESOURO_PREFIXADO" | "FUND" | "ETF"
+  institution           String
+  indexer               String    @default("CDI")
+  rateLabel             String
+  costBasisCents        Int
+  currentGrossCents     Int
+  daysHeld              Int       @default(365)
+  redemptionAvailableAt String    // YYYY-MM-DD
+  maturityDate          String    // YYYY-MM-DD
+  fgcEligible           Boolean   @default(false)
+  quoteStatus           String    @default("VALID") // "VALID" | "STALE"
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([workspaceId, kind])
+}
+
+// ============================================================================
+// PACOTE 04: INTELIGÊNCIA FINANCEIRA, CONEXÕES E IMPORTAÇÃO CONCILIÁVEL
+// ============================================================================
+model FinancialConnection {
+  id               String    @id @default(uuid())
+  workspaceId      String
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  providerCode     String
+  institutionName  String
+  status           String    @default("DISCONNECTED") // "DISCONNECTED" | "PENDING_CONSENT" | "ACTIVE" | "SYNCING" | "EXPIRED" | "REVOKED" | "ERROR"
+  consentId        String?
+  consentScopes    String?
+  consentExpiresAt DateTime?
+  lastSyncAt       DateTime?
+  lastErrorCode    String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([workspaceId, providerCode, id])
+  @@index([workspaceId, status])
+}
+
+model ImportBatch {
+  id            String    @id @default(uuid())
+  workspaceId   String
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connectionId  String?
+  sourceType    String    // "CSV" | "OFX"
+  fileName      String    @default("extrato.csv")
+  state         String    @default("REVIEWING") // "UPLOADED" | "VALIDATED" | "REVIEWING" | "COMMITTED" | "REJECTED"
+  inputChecksum String
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  committedAt   DateTime?
+
+  @@index([workspaceId, state, createdAt])
+}
+
+model ImportedExternalTransaction {
+  id                   String    @id @default(uuid())
+  workspaceId          String
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  providerId           String
+  accountExternalId    String
+  externalId           String
+  postedOn             String    // YYYY-MM-DD
+  amountCents          Int
+  direction            String    // "CREDIT" | "DEBIT" | "SELF_TRANSFER"
+  description          String
+  rawHash              String
+  importBatchId        String
+  state                String    @default("STAGED") // "STAGED" | "MATCHED" | "IMPORTED" | "IGNORED"
+  matchedLedgerEntryId String?
+  createdAt            DateTime  @default(now())
+
+  @@unique([workspaceId, providerId, accountExternalId, externalId])
+  @@index([workspaceId, importBatchId])
+}
+
+model FinancialInsight {
+  id            String    @id @default(uuid())
+  workspaceId   String
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  code          String
+  severity      String    // "HIGH" | "MEDIUM" | "LOW"
+  state         String    @default("NEW") // "NEW" | "READ" | "DISMISSED" | "COMPLETED"
+  title         String
+  explanation   String
+  evidenceJson  String
+  asOf          DateTime  @default(now())
+  sourceVersion String    @default("4.0.0")
+  dedupeKey     String
+  createdAt     DateTime  @default(now())
+
+  @@unique([workspaceId, dedupeKey])
+  @@index([workspaceId, state, createdAt])
+}
+
+model FinancialNotificationPreference {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  channel     String    // "IN_APP" | "EMAIL"
+  eventType   String
+  enabled     Boolean   @default(false)
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([workspaceId, userId, channel, eventType])
+}
+
+model FinancialConsentAudit {
+  id           String    @id @default(uuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connectionId String
+  actorId      String
+  action       String    // "GRANTED" | "SCOPE_CHANGED" | "EXPIRED" | "REVOKED"
+  scopesJson   String
+  eventAt      DateTime  @default(now())
+  requestId    String
+
+  @@index([workspaceId, connectionId, eventAt])
 }

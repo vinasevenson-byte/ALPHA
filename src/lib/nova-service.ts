@@ -11,6 +11,17 @@ import {
   remainingInstallment,
   splitInstallmentsExact,
 } from "@/domain/planning";
+import {
+  calculateFinancialHealthIndex,
+  detectCashRisk,
+  projectCash,
+  qualityStatus,
+  savingsRate,
+} from "@/domain/intelligence";
+import {
+  projectLiquidity,
+  taxableFixedIncomeRedemption,
+} from "@/domain/investments";
 
 export interface ApiErrorShape {
   code: string;
@@ -57,7 +68,7 @@ export function addDaysIso(baseIso: string, days: number): string {
 
 /**
  * Garante que o usuário padrão e os dois workspaces (Pessoal PF e Empresarial PJ)
- * existam, começando em ESTADO ZERO (R$ 0,00 - Aguardando lançamentos) conforme P01/P02.
+ * existam, começando em ESTADO ZERO (R$ 0,00 - Aguardando lançamentos) conforme P01/P02/P03/P04.
  */
 export async function ensureBaseWorkspaces() {
   const existingUsers = await prisma.user.count();
@@ -135,7 +146,7 @@ export async function ensureBaseWorkspaces() {
     ],
   });
 
-  // Cenários base P02 (sem transações)
+  // Cenários base P02 e Catálogo de Conexões P04 (DISCONNECTED por padrão, sem credenciais)
   for (const ws of [wsPF, wsPJ]) {
     await prisma.novaPlanningScenario.createMany({
       data: [
@@ -168,6 +179,29 @@ export async function ensureBaseWorkspaces() {
           hypotheticalOutflowCents: 0,
           notes: "Inclui recebíveis de confiança média e receitas potenciais.",
           createdBy: user.id,
+        },
+      ],
+    });
+
+    await prisma.financialConnection.createMany({
+      data: [
+        {
+          workspaceId: ws.id,
+          providerCode: "ITAU_OPENFINANCE_BR",
+          institutionName: "Itaú Unibanco (Open Finance Read-Only)",
+          status: "DISCONNECTED",
+        },
+        {
+          workspaceId: ws.id,
+          providerCode: "NUBANK_OPENFINANCE_BR",
+          institutionName: "Nu Pagamentos / Nubank (Open Finance Read-Only)",
+          status: "DISCONNECTED",
+        },
+        {
+          workspaceId: ws.id,
+          providerCode: "BTG_OPENFINANCE_BR",
+          institutionName: "BTG Pactual Empresas & Investimentos",
+          status: "DISCONNECTED",
         },
       ],
     });
@@ -220,8 +254,9 @@ export async function authorizeWorkspaceAccess(
 }
 
 /**
- * Calcula todos os indicadores consolidados, saldos por conta, fluxo de caixa
- * projetado, capacidade conservadora de reserva (P02) e alertas do workspace.
+ * Calcula todos os indicadores consolidados (P01 + P02 + P03 + P04), saldos por conta,
+ * fluxo de caixa projetado, capacidade conservadora de reserva, carteira de investimentos,
+ * índice de saúde financeira ponderado, qualidade dos dados e conexões/importações.
  */
 export async function getWorkspaceFullState(params: {
   workspaceId?: string;
@@ -242,8 +277,37 @@ export async function getWorkspaceFullState(params: {
   }
 
   const wsId = activeWorkspace.id;
-  const horizonDays = params.horizonDays ?? 30;
+  const horizonDays = params.horizonDays ?? 180;
   const scenarioKind = params.scenarioKind ?? "BASE";
+
+  // Garante que o catálogo básico de conexões P04 exista para este workspace
+  const existingConnCount = await prisma.financialConnection.count({
+    where: { workspaceId: wsId },
+  });
+  if (existingConnCount === 0) {
+    await prisma.financialConnection.createMany({
+      data: [
+        {
+          workspaceId: wsId,
+          providerCode: "ITAU_OPENFINANCE_BR",
+          institutionName: "Itaú Unibanco (Open Finance Read-Only)",
+          status: "DISCONNECTED",
+        },
+        {
+          workspaceId: wsId,
+          providerCode: "NUBANK_OPENFINANCE_BR",
+          institutionName: "Nu Pagamentos / Nubank (Open Finance Read-Only)",
+          status: "DISCONNECTED",
+        },
+        {
+          workspaceId: wsId,
+          providerCode: "BTG_OPENFINANCE_BR",
+          institutionName: "BTG Pactual Empresas & Investimentos",
+          status: "DISCONNECTED",
+        },
+      ],
+    });
+  }
 
   const [
     memberships,
@@ -260,6 +324,12 @@ export async function getWorkspaceFullState(params: {
     scenarios,
     storedAlerts,
     auditEvents,
+    investmentPositions,
+    financialConnections,
+    importBatches,
+    importedTransactions,
+    storedInsights,
+    consentAudits,
   ] = await Promise.all([
     prisma.membership.findMany({
       where: { workspaceId: wsId },
@@ -323,7 +393,32 @@ export async function getWorkspaceFullState(params: {
     prisma.auditEvent.findMany({
       where: { workspaceId: wsId },
       orderBy: { timestamp: "desc" },
-      take: 40,
+      take: 50,
+    }),
+    prisma.novaInvestmentPosition.findMany({
+      where: { workspaceId: wsId },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.financialConnection.findMany({
+      where: { workspaceId: wsId },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.importBatch.findMany({
+      where: { workspaceId: wsId },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.importedExternalTransaction.findMany({
+      where: { workspaceId: wsId },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.financialInsight.findMany({
+      where: { workspaceId: wsId },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.financialConsentAudit.findMany({
+      where: { workspaceId: wsId },
+      orderBy: { eventAt: "desc" },
+      take: 30,
     }),
   ]);
 
@@ -431,7 +526,6 @@ export async function getWorkspaceFullState(params: {
 
   enrichedInstallments.sort((a, b) => a.dueOn.localeCompare(b.dueOn));
 
-  // Compromissos P01 pendentes (sem vínculo com installment P02) também entram na projeção sem duplicar
   const linkedTxIds = new Set(
     obligations
       .flatMap((o) => o.installments)
@@ -460,7 +554,6 @@ export async function getWorkspaceFullState(params: {
     let inboundCents = 0n;
     let outboundCents = 0n;
 
-    // Parcelas P02 em aberto na data (ou vencidas no D0 para desconto único no início do horizonte)
     for (const inst of enrichedInstallments) {
       if (inst.derivedStatus === "PAID" || inst.derivedStatus === "CANCELED") {
         continue;
@@ -470,7 +563,6 @@ export async function getWorkspaceFullState(params: {
       if (!matchesDay) continue;
 
       if (inst.direction === "RECEIVABLE") {
-        // No cenário conservador, ignora recebíveis atrasados ou de média confiança
         if (
           scenarioKind === "CONSERVATIVE" &&
           (inst.confidence !== "HIGH" || inst.dueOn < today)
@@ -491,7 +583,6 @@ export async function getWorkspaceFullState(params: {
       }
     }
 
-    // Transações P01 pendentes avulsas
     for (const ptx of standalonePendingTxs) {
       const targetDate = ptx.dueOn || ptx.occurredOn;
       const matchesDay =
@@ -501,7 +592,6 @@ export async function getWorkspaceFullState(params: {
       else if (ptx.kind === "EXPENSE") outboundCents += BigInt(ptx.amountCents);
     }
 
-    // Premissas hipotéticas do cenário no dia +15
     if (i === Math.min(15, horizonDays)) {
       if (activeScenario.hypotheticalInflowCents > 0) {
         inboundCents += BigInt(activeScenario.hypotheticalInflowCents);
@@ -567,7 +657,6 @@ export async function getWorkspaceFullState(params: {
     0
   );
 
-  // Saldo livre estimado (não alocado em cofres)
   const freeCashCents = eligibleBalanceCents - totalAllocatedReservesCents;
 
   // 6. Motor de Capacidade Conservadora de Reserva (P02: calculateReserveCapacity)
@@ -576,7 +665,7 @@ export async function getWorkspaceFullState(params: {
     minForecastBalance: minForecastBalanceBig,
     safetyBuffer: BigInt(Math.max(0, activeWorkspace.safetyBufferCents)),
     alreadyAllocated: BigInt(Math.max(0, totalAllocatedReservesCents)),
-    overdueNotInForecast: 0n, // Vencidos já estão descontados em D0 da projeção
+    overdueNotInForecast: 0n,
   });
   const headroomCents = Number(headroomBig);
 
@@ -695,7 +784,108 @@ export async function getWorkspaceFullState(params: {
     };
   });
 
-  // 9. Alertas Dinâmicos + Persistidos (Central de Alertas P02)
+  // 9. Carteira de Investimentos Persistida (Pacote 03)
+  let totalPortfolioCostCents = 0;
+  let totalPortfolioGrossCents = 0;
+  let totalPortfolioNetCents = 0;
+
+  for (const pos of investmentPositions) {
+    totalPortfolioCostCents += pos.costBasisCents;
+    totalPortfolioGrossCents += pos.currentGrossCents;
+    const isExemptPF =
+      (pos.kind === "LCI" || pos.kind === "LCA") &&
+      activeWorkspace.type === "PERSONAL";
+    if (isExemptPF) {
+      totalPortfolioNetCents += pos.currentGrossCents;
+    } else {
+      const red = taxableFixedIncomeRedemption({
+        principal: pos.costBasisCents / 100,
+        grossRedemption: pos.currentGrossCents / 100,
+        days: Math.max(30, pos.daysHeld),
+      });
+      totalPortfolioNetCents += Math.round(red.netRedemption * 100);
+    }
+  }
+
+  const liqP03 = projectLiquidity(
+    investmentPositions.map((p) => ({
+      amount: p.currentGrossCents / 100,
+      redemptionAvailableAt: p.redemptionAvailableAt,
+    })),
+    today
+  );
+
+  // 10. Motor de Inteligência e Qualidade de Dados (Pacote 04)
+  const unreconciledCount = importedTransactions.filter(
+    (it) => it.state === "STAGED"
+  ).length;
+  const staleQuotesCount = investmentPositions.filter(
+    (p) => p.quoteStatus === "STALE"
+  ).length;
+  const p04Quality = qualityStatus({
+    missingAccounts: accounts.length === 0 ? 1 : 0,
+    unreconciledTransactions: unreconciledCount,
+    staleMarketPrices: staleQuotesCount,
+  });
+
+  const overdueItems = enrichedInstallments.filter(
+    (i) => i.derivedStatus === "OVERDUE"
+  );
+  const exceededBudgetsCount = computedBudgets.filter(
+    (b) => b.usagePct > 100
+  ).length;
+
+  const hasSufficientData =
+    accounts.length > 0 ||
+    transactions.length > 0 ||
+    enrichedInstallments.length > 0 ||
+    investmentPositions.length > 0;
+
+  const healthIndex = calculateFinancialHealthIndex({
+    hasSufficientData,
+    asOf: today,
+    eligibleBalanceCents,
+    minForecastBalanceCents,
+    safetyBufferCents: activeWorkspace.safetyBufferCents,
+    overdueInstallmentsCount: overdueItems.length,
+    totalInstallmentsCount: enrichedInstallments.length,
+    exceededBudgetsCount,
+    totalBudgetsCount: computedBudgets.length,
+    allocatedReservesCents: totalAllocatedReservesCents,
+    topExpenseCategorySharePct: 42,
+  });
+
+  const savingsRateRatio = savingsRate(
+    consolidatedTotals.settledIncomeCents,
+    consolidatedTotals.settledExpenseCents
+  );
+
+  // Projeção P04 (projectCash) sobre eventos pendentes
+  const p04Events = enrichedInstallments
+    .filter(
+      (i) => i.derivedStatus !== "PAID" && i.derivedStatus !== "CANCELED"
+    )
+    .map((i) => ({
+      id: `inst_${i.id}`,
+      date: i.dueOn < today ? today : i.dueOn,
+      amountCents: i.outstandingCents,
+      status: "PENDING" as const,
+      kind:
+        i.direction === "RECEIVABLE"
+          ? ("INCOME" as const)
+          : ("EXPENSE" as const),
+    }));
+
+  const p04Projection = projectCash(
+    eligibleBalanceCents,
+    today,
+    addDaysIso(today, horizonDays),
+    p04Events
+  );
+
+  const p04RiskInsights = detectCashRisk(p04Projection, "ledger+installments");
+
+  // 11. Alertas Dinâmicos + Persistidos (Central de Alertas P02 + P04)
   const dynamicAlerts: Array<{
     id: string;
     type: string;
@@ -714,9 +904,6 @@ export async function getWorkspaceFullState(params: {
     state: a.state,
   }));
 
-  const overdueItems = enrichedInstallments.filter(
-    (i) => i.derivedStatus === "OVERDUE"
-  );
   if (overdueItems.length > 0) {
     dynamicAlerts.unshift({
       id: "dyn-overdue",
@@ -761,6 +948,19 @@ export async function getWorkspaceFullState(params: {
     });
   }
 
+  if (unreconciledCount > 0) {
+    dynamicAlerts.unshift({
+      id: "dyn-unreconciled",
+      type: "IMPORT_RECONCILIATION_PENDING",
+      severity: "WARNING",
+      title: `${unreconciledCount} lançamento(s) importado(s) aguardando conciliação`,
+      message:
+        "Confirme ou ignore os itens no módulo Integrações → Conciliação para liberar sugestões automáticas.",
+      occurrenceOn: today,
+      state: "NEW",
+    });
+  }
+
   const openPayablesCents = enrichedInstallments
     .filter(
       (i) =>
@@ -797,6 +997,12 @@ export async function getWorkspaceFullState(params: {
     scenarios,
     alerts: dynamicAlerts,
     auditEvents,
+    investmentPositions,
+    financialConnections,
+    importBatches,
+    importedTransactions,
+    financialInsights: storedInsights,
+    consentAudits,
     kpis: {
       eligibleBalanceCents,
       eligibleBalanceDecimal: centsToDecimalString(eligibleBalanceCents),
@@ -811,6 +1017,28 @@ export async function getWorkspaceFullState(params: {
       openPayablesCents: openPayablesCents + consolidatedTotals.pendingExpenseCents,
       openReceivablesCents:
         openReceivablesCents + consolidatedTotals.pendingIncomeCents,
+      portfolioCostCents: totalPortfolioCostCents,
+      portfolioGrossCents: totalPortfolioGrossCents,
+      portfolioNetCents: totalPortfolioNetCents,
+      portfolioAvailableLiquidityCents: Math.round(liqP03.available * 100),
+      portfolioLockedLiquidityCents: Math.round(liqP03.locked * 100),
+    },
+    p04Intelligence: {
+      asOf: today,
+      healthIndex,
+      quality: p04Quality,
+      savingsRatePct:
+        savingsRateRatio === null
+          ? null
+          : Math.round(savingsRateRatio * 1000) / 10,
+      riskInsights: p04RiskInsights,
+      featureFlags: {
+        NOVA_P4_INSIGHTS: true,
+        NOVA_P4_IMPORTS: true,
+        NOVA_P4_ALERTS: true,
+        NOVA_P4_AI_ASSISTANT: true,
+        NOVA_P4_OPEN_FINANCE: false,
+      },
     },
     reserveCapacityReport: {
       eligibleBalance: centsToDecimalString(eligibleBalanceCents),
@@ -823,7 +1051,7 @@ export async function getWorkspaceFullState(params: {
       confidence,
       explanations,
       asOf: new Date().toISOString(),
-      calculationVersion: "2.0.0",
+      calculationVersion: "4.0.0",
     },
     forecastSeries: forecastPoints.map((p) => ({
       date: p.date,

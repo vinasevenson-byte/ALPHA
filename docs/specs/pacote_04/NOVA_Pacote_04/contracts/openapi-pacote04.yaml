@@ -1,0 +1,135 @@
+openapi: 3.0.3
+info:
+  title: NOVA Pacote 04 - Inteligência e Integrações
+  version: 4.0.0
+  description: Contrato proposto; não há endpoints publicados.
+servers:
+  - url: /api/v1
+security:
+  - SessionAuth: []
+paths:
+  /workspaces/{workspaceId}/intelligence/summary:
+    get:
+      operationId: getIntelligenceSummary
+      summary: Diagnóstico consolidado com evidências
+      parameters:
+        - $ref: '#/components/parameters/workspaceId'
+      responses:
+        '200':
+          description: Resumo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntelligenceSummary'
+        '403': {description: Sem autorização}
+  /workspaces/{workspaceId}/insights:
+    get:
+      operationId: listInsights
+      parameters:
+        - $ref: '#/components/parameters/workspaceId'
+      responses:
+        '200': {description: Lista paginada de insights}
+        '403': {description: Sem autorização}
+  /workspaces/{workspaceId}/insights/{insightId}/acknowledge:
+    post:
+      operationId: acknowledgeInsight
+      parameters:
+        - $ref: '#/components/parameters/workspaceId'
+        - name: insightId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '204': {description: Reconhecido}
+        '403': {description: Sem autorização}
+  /workspaces/{workspaceId}/connections:
+    get:
+      operationId: listConnections
+      parameters:
+        - $ref: '#/components/parameters/workspaceId'
+      responses:
+        '200': {description: Conexões e status sem credenciais}
+        '403': {description: Sem autorização}
+  /workspaces/{workspaceId}/connections/{connectionId}/revoke:
+    post:
+      operationId: revokeConsent
+      parameters:
+        - $ref: '#/components/parameters/workspaceId'
+        - name: connectionId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '202': {description: Revogação iniciada}
+        '403': {description: Sem autorização}
+  /workspaces/{workspaceId}/imports:
+    post:
+      operationId: createImportBatch
+      parameters:
+        - $ref: '#/components/parameters/workspaceId'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sourceType, fileReference]
+              properties:
+                sourceType: {type: string, enum: [CSV, OFX]}
+                fileReference: {type: string}
+      responses:
+        '202': {description: Lote em validação}
+        '403': {description: Sem autorização}
+  /workspaces/{workspaceId}/alerts:
+    get:
+      operationId: listAlerts
+      parameters:
+        - $ref: '#/components/parameters/workspaceId'
+      responses:
+        '200': {description: Alertas com prioridade e status}
+        '403': {description: Sem autorização}
+  /workspaces/{workspaceId}/assistant/query:
+    post:
+      operationId: queryReadonlyAssistant
+      parameters:
+        - $ref: '#/components/parameters/workspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question: {type: string, minLength: 1, maxLength: 2000}
+      responses:
+        '200': {description: Resposta ancorada em evidências, somente leitura}
+        '403': {description: Sem autorização}
+components:
+  securitySchemes:
+    SessionAuth:
+      type: apiKey
+      in: cookie
+      name: nova_session
+  parameters:
+    workspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  schemas:
+    IntelligenceSummary:
+      type: object
+      required: [asOf, quality, reserveCapacityCents, minimumProjectedCents]
+      properties:
+        asOf: {type: string, format: date-time}
+        quality: {type: string, enum: [VERIFIED, ESTIMATED, STALE, UNAVAILABLE]}
+        reserveCapacityCents: {type: integer, format: int64, nullable: true}
+        minimumProjectedCents: {type: integer, format: int64, nullable: true}
+        explanations:
+          type: array
+          items: {type: string}

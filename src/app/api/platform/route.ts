@@ -81,13 +81,27 @@ export async function POST(req: NextRequest) {
     const today = todayIso();
 
     // =========================================================================
-    // AÇÃO ESPECIAL 1: ZERAR WORKSPACE (ESTADO INICIAL EM ZERO R$ 0,00 P01/P02)
+    // AÇÃO ESPECIAL 1: ZERAR WORKSPACE (ESTADO INICIAL EM ZERO R$ 0,00 P01/P02/P03/P04)
     // =========================================================================
     if (action === "RESET_TO_ZERO") {
       if (!workspaceId) {
         throw new NovaDomainError("VALIDATION_ERROR", "workspaceId obrigatório", 422);
       }
       await prisma.$transaction([
+        prisma.financialInsight.deleteMany({ where: { workspaceId } }),
+        prisma.importedExternalTransaction.deleteMany({ where: { workspaceId } }),
+        prisma.importBatch.deleteMany({ where: { workspaceId } }),
+        prisma.financialConsentAudit.deleteMany({ where: { workspaceId } }),
+        prisma.financialConnection.updateMany({
+          where: { workspaceId },
+          data: {
+            status: "DISCONNECTED",
+            consentId: null,
+            consentExpiresAt: null,
+            lastSyncAt: null,
+          },
+        }),
+        prisma.novaInvestmentPosition.deleteMany({ where: { workspaceId } }),
         prisma.novaAlert.deleteMany({ where: { workspaceId } }),
         prisma.novaGoal.deleteMany({ where: { workspaceId } }),
         prisma.novaReserveMovement.deleteMany({ where: { workspaceId } }),
@@ -111,7 +125,7 @@ export async function POST(req: NextRequest) {
             entityType: "Workspace",
             entityId: workspaceId,
             requestId,
-            metadataJson: JSON.stringify({ note: "Retorno ao estado inicial R$ 0,00" }),
+            metadataJson: JSON.stringify({ note: "Retorno ao estado inicial R$ 0,00 (P01–P04)" }),
           },
         }),
       ]);
@@ -119,17 +133,22 @@ export async function POST(req: NextRequest) {
     }
 
     // =========================================================================
-    // AÇÃO ESPECIAL 2: CARREGAR FIXTURE DE HOMOLOGAÇÃO P01 + P02
-    // Reproduz exatamente o cenário canônico do Pacote 02:
+    // AÇÃO ESPECIAL 2: CARREGAR FIXTURE DE HOMOLOGAÇÃO INTEGRADA P01 + P02 + P03 + P04
+    // Reproduz exatamente o cenário canônico:
     // Saldo atual = R$ 10.000,00 | Menor saldo projetado = R$ 7.000,00
     // Margem de segurança = R$ 2.000,00 | Reservas existentes = R$ 1.000,00
     // Capacidade adicional estimada para reservar (headroom) = R$ 4.000,00
+    // + Carteira P03 persistida (R$ 41.090,00 brutos) + Insights P04 com evidências
     // =========================================================================
     if (action === "LOAD_P02_FIXTURE") {
       if (!workspaceId) {
         throw new NovaDomainError("VALIDATION_ERROR", "workspaceId obrigatório", 422);
       }
       await prisma.$transaction(async (tx) => {
+        await tx.financialInsight.deleteMany({ where: { workspaceId } });
+        await tx.importedExternalTransaction.deleteMany({ where: { workspaceId } });
+        await tx.importBatch.deleteMany({ where: { workspaceId } });
+        await tx.novaInvestmentPosition.deleteMany({ where: { workspaceId } });
         await tx.novaAlert.deleteMany({ where: { workspaceId } });
         await tx.novaGoal.deleteMany({ where: { workspaceId } });
         await tx.novaReserveMovement.deleteMany({ where: { workspaceId } });
@@ -349,11 +368,116 @@ export async function POST(req: NextRequest) {
           },
         });
 
+        // Posições de Investimento Persistidas (Pacote 03)
+        await tx.novaInvestmentPosition.createMany({
+          data: [
+            {
+              workspaceId,
+              symbol: "LFT-2029",
+              name: "Tesouro Selic 2029",
+              kind: "TESOURO_SELIC",
+              institution: "Tesouro Direto",
+              indexer: "SELIC",
+              rateLabel: "100% Selic + 0,05%",
+              costBasisCents: 1500000,
+              currentGrossCents: 1668000,
+              daysHeld: 400,
+              redemptionAvailableAt: "2026-01-01",
+              maturityDate: "2029-03-01",
+              fgcEligible: false,
+              quoteStatus: "VALID",
+            },
+            {
+              workspaceId,
+              symbol: "CDB-DI-105",
+              name: "CDB Liquidez Diária 105% CDI",
+              kind: "CDB",
+              institution: "Banco Itaú",
+              indexer: "CDI",
+              rateLabel: "105% do CDI",
+              costBasisCents: 1000000,
+              currentGrossCents: 1115000,
+              daysHeld: 370,
+              redemptionAvailableAt: "2026-01-01",
+              maturityDate: "2028-06-01",
+              fgcEligible: true,
+              quoteStatus: "VALID",
+            },
+            {
+              workspaceId,
+              symbol: "LCI-94",
+              name: "LCI Habitação 94% CDI (Carência)",
+              kind: "LCI",
+              institution: "Caixa Econômica",
+              indexer: "CDI",
+              rateLabel: "94% CDI (Isento IR PF)",
+              costBasisCents: 1200000,
+              currentGrossCents: 1326000,
+              daysHeld: 280,
+              redemptionAvailableAt: "2027-04-01",
+              maturityDate: "2027-11-01",
+              fgcEligible: true,
+              quoteStatus: "VALID",
+            },
+          ],
+        });
+
+        // Insights Auditáveis Persistidos (Pacote 04)
+        await tx.financialInsight.createMany({
+          data: [
+            {
+              workspaceId,
+              code: "RESERVE_HEADROOM_AVAILABLE",
+              severity: "HIGH",
+              state: "NEW",
+              title: "Capacidade Segura de Reserva Disponível (R$ 4.000,00)",
+              explanation:
+                "Com base no menor saldo projetado de R$ 7.000,00, descontando a margem protegida de R$ 2.000,00 e R$ 1.000,00 já alocados em cofres, você pode alocar até R$ 4.000,00 sem comprometer o fluxo de caixa.",
+              evidenceJson: JSON.stringify([
+                {
+                  metric: "minForecastBalanceCents",
+                  asOf: today,
+                  source: "forecast-p02-p04",
+                  status: "ESTIMATED",
+                  value: "700000",
+                },
+                {
+                  metric: "reserveCapacityCents",
+                  asOf: today,
+                  source: "reserveCapacity-p04",
+                  status: "VERIFIED",
+                  value: "400000",
+                },
+              ]),
+              dedupeKey: `insight_headroom_${today}`,
+            },
+            {
+              workspaceId,
+              code: "PORTFOLIO_LIQUIDITY_CHECK",
+              severity: "MEDIUM",
+              state: "NEW",
+              title: "Equilíbrio entre Liquidez Imediata e Carência (P03 + P04)",
+              explanation:
+                "67,7% da sua carteira investida possui liquidez D+0/D+1 (Tesouro Selic + CDB DI), enquanto 32,3% está em LCI com carência até 2027.",
+              evidenceJson: JSON.stringify([
+                {
+                  metric: "availableLiquidityCents",
+                  asOf: today,
+                  source: "investments-p03",
+                  status: "VERIFIED",
+                  value: "2783000",
+                },
+              ]),
+              dedupeKey: `insight_liquidity_${today}`,
+            },
+          ],
+        });
+
         await tx.auditEvent.create({
           data: {
             workspaceId,
             actorId,
-            action: "fixture.p02_loaded",
+            action: "fixture.p01_p02_p03_p04_loaded",
             entityType: "Workspace",
             entityId: workspaceId,
             requestId,
@@ -363,6 +487,7 @@ export async function POST(req: NextRequest) {
               B: "2000.00",
               R: "1000.00",
               headroom: "4000.00",
+              portfolioGross: "41090.00",
             }),
           },
         });
@@ -403,7 +528,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Alterar papel de membro para testar RBAC (OWNER, ADMIN, EDITOR, VIEWER)
-    if (action === "CHANGE_MEMBER_ROLE") {
+    if (action === "CHANGE_MEMBER_ROLE" || action === "SWITCH_ROLE") {
       const { role } = body;
       await prisma.membership.update({
         where: {
@@ -1227,6 +1352,428 @@ export async function POST(req: NextRequest) {
         },
       });
       return NextResponse.json({ ok: true, category: cat, requestId }, { status: 201 });
+    }
+
+    // =========================================================================
+    // PACOTE 03: POSIÇÕES DE INVESTIMENTO PERSISTIDAS NO BANCO
+    // =========================================================================
+    if (action === "CREATE_INVESTMENT_POSITION") {
+      const {
+        name,
+        kind,
+        institution,
+        rateLabel,
+        costBasisReais,
+        currentGrossReais,
+        daysHeld,
+      } = body;
+
+      const pos = await prisma.novaInvestmentPosition.create({
+        data: {
+          workspaceId,
+          symbol: kind || "CDB",
+          name: name || "Ativo de Renda Fixa",
+          kind: kind || "CDB",
+          institution: institution || "Custódia B3 / Banco",
+          indexer: "CDI/SELIC",
+          rateLabel: rateLabel || "100% CDI",
+          costBasisCents: Math.round(Number(costBasisReais || 0) * 100),
+          currentGrossCents: Math.round(Number(currentGrossReais || 0) * 100),
+          daysHeld: Number(daysHeld || 365),
+          redemptionAvailableAt: "2026-01-01",
+          maturityDate: "2028-12-01",
+          fgcEligible:
+            kind === "CDB" || kind === "LCI" || kind === "LCA",
+          quoteStatus: "VALID",
+        },
+      });
+
+      await prisma.auditEvent.create({
+        data: {
+          workspaceId,
+          actorId,
+          action: "investment.position_created",
+          entityType: "NovaInvestmentPosition",
+          entityId: pos.id,
+          requestId,
+          metadataJson: JSON.stringify({
+            name: pos.name,
+            kind: pos.kind,
+            gross: centsToDecimalString(pos.currentGrossCents),
+          }),
+        },
+      });
+
+      return NextResponse.json({ ok: true, position: pos, requestId }, { status: 201 });
+    }
+
+    if (action === "CLEAR_INVESTMENTS") {
+      await prisma.novaInvestmentPosition.deleteMany({ where: { workspaceId } });
+      await prisma.auditEvent.create({
+        data: {
+          workspaceId,
+          actorId,
+          action: "investment.positions_cleared",
+          entityType: "Workspace",
+          entityId: workspaceId,
+          requestId,
+          metadataJson: JSON.stringify({ note: "Carteira P03 zerada para R$ 0,00" }),
+        },
+      });
+      return NextResponse.json({ ok: true, requestId });
+    }
+
+    if (action === "LOAD_P03_FIXTURE") {
+      await prisma.novaInvestmentPosition.deleteMany({ where: { workspaceId } });
+      await prisma.novaInvestmentPosition.createMany({
+        data: [
+          {
+            workspaceId,
+            symbol: "LFT-2029",
+            name: "Tesouro Selic 2029",
+            kind: "TESOURO_SELIC",
+            institution: "Tesouro Direto",
+            indexer: "SELIC",
+            rateLabel: "100% Selic + 0,05%",
+            costBasisCents: 1500000,
+            currentGrossCents: 1668000,
+            daysHeld: 400,
+            redemptionAvailableAt: "2026-01-01",
+            maturityDate: "2029-03-01",
+            fgcEligible: false,
+            quoteStatus: "VALID",
+          },
+          {
+            workspaceId,
+            symbol: "CDB-DI-105",
+            name: "CDB Liquidez Diária 105% CDI",
+            kind: "CDB",
+            institution: "Banco Itaú",
+            indexer: "CDI",
+            rateLabel: "105% do CDI",
+            costBasisCents: 1000000,
+            currentGrossCents: 1115000,
+            daysHeld: 370,
+            redemptionAvailableAt: "2026-01-01",
+            maturityDate: "2028-06-01",
+            fgcEligible: true,
+            quoteStatus: "VALID",
+          },
+          {
+            workspaceId,
+            symbol: "LCI-94",
+            name: "LCI Habitação 94% CDI (Carência)",
+            kind: "LCI",
+            institution: "Caixa Econômica",
+            indexer: "CDI",
+            rateLabel: "94% CDI (Isento IR PF)",
+            costBasisCents: 1200000,
+            currentGrossCents: 1326000,
+            daysHeld: 280,
+            redemptionAvailableAt: "2027-04-01",
+            maturityDate: "2027-11-01",
+            fgcEligible: true,
+            quoteStatus: "VALID",
+          },
+        ],
+      });
+      return NextResponse.json({ ok: true, requestId });
+    }
+
+    // =========================================================================
+    // PACOTE 04: CONEXÕES, CONSENTIMENTOS, IMPORTAÇÃO CSV E INSIGHTS AUDITÁVEIS
+    // =========================================================================
+    if (action === "GRANT_CONNECTION_CONSENT") {
+      const { connectionId, scopes } = body;
+      const consentId = `consent_${Date.now()}`;
+      const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+      const scopesArr = Array.isArray(scopes)
+        ? scopes
+        : ["ACCOUNTS_READ", "BALANCES_READ", "TRANSACTIONS_READ"];
+
+      const updated = await prisma.financialConnection.update({
+        where: { id: connectionId },
+        data: {
+          status: "ACTIVE",
+          consentId,
+          consentScopes: JSON.stringify(scopesArr),
+          consentExpiresAt: expiresAt,
+          lastSyncAt: new Date(),
+        },
+      });
+
+      await prisma.financialConsentAudit.create({
+        data: {
+          workspaceId,
+          connectionId,
+          actorId,
+          action: "GRANTED",
+          scopesJson: JSON.stringify(scopesArr),
+          requestId,
+        },
+      });
+
+      await prisma.auditEvent.create({
+        data: {
+          workspaceId,
+          actorId,
+          action: "connection.consent_granted",
+          entityType: "FinancialConnection",
+          entityId: connectionId,
+          requestId,
+          metadataJson: JSON.stringify({
+            providerCode: updated.providerCode,
+            consentId,
+            scopes: scopesArr,
+          }),
+        },
+      });
+
+      return NextResponse.json({ ok: true, connection: updated, requestId });
+    }
+
+    if (action === "REVOKE_CONNECTION_CONSENT") {
+      const { connectionId } = body;
+      const updated = await prisma.financialConnection.update({
+        where: { id: connectionId },
+        data: {
+          status: "REVOKED",
+          consentExpiresAt: new Date(),
+        },
+      });
+
+      await prisma.financialConsentAudit.create({
+        data: {
+          workspaceId,
+          connectionId,
+          actorId,
+          action: "REVOKED",
+          scopesJson: updated.consentScopes || "[]",
+          requestId,
+        },
+      });
+
+      await prisma.auditEvent.create({
+        data: {
+          workspaceId,
+          actorId,
+          action: "connection.consent_revoked",
+          entityType: "FinancialConnection",
+          entityId: connectionId,
+          requestId,
+          metadataJson: JSON.stringify({
+            providerCode: updated.providerCode,
+            status: "REVOKED",
+          }),
+        },
+      });
+
+      return NextResponse.json({ ok: true, connection: updated, requestId });
+    }
+
+    // Importação Manual CSV/OFX em Staging com Deduplicação por (workspace, provider, account, externalId)
+    if (action === "STAGE_CSV_IMPORT") {
+      const { csvContent, providerId = "MANUAL_CSV", accountExternalId = "ACC_PRINCIPAL" } = body;
+      const rawText = String(csvContent || "").trim();
+      if (!rawText) {
+        throw new NovaDomainError("VALIDATION_ERROR", "Conteúdo CSV vazio.", 422);
+      }
+
+      const batch = await prisma.importBatch.create({
+        data: {
+          workspaceId,
+          sourceType: "CSV",
+          fileName: "extrato-importado.csv",
+          state: "REVIEWING",
+          inputChecksum: `sha256_${rawText.length}_${Date.now()}`,
+          createdBy: actorId,
+        },
+      });
+
+      const lines = rawText
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !l.toLowerCase().startsWith("data,"));
+
+      let stagedCount = 0;
+      let duplicateCount = 0;
+
+      for (let idx = 0; idx < lines.length; idx++) {
+        // Formato esperado: YYYY-MM-DD,Descricao,ValorDecimal,CREDIT|DEBIT|SELF_TRANSFER,ExternalId
+        const parts = lines[idx].split(",").map((p) => p.trim());
+        const postedOn = /^\d{4}-\d{2}-\d{2}$/.test(parts[0] || "")
+          ? parts[0]
+          : today;
+        const description = parts[1] || `Item Importado #${idx + 1}`;
+        const amountCents = decimalStringToCents(parts[2] || "100.00");
+        const rawDir = (parts[3] || "DEBIT").toUpperCase();
+        const isSelfTransfer =
+          rawDir === "SELF_TRANSFER" ||
+          description.toLowerCase().includes("transferencia propria") ||
+          description.toLowerCase().includes("entre contas proprias");
+        const direction = isSelfTransfer
+          ? "SELF_TRANSFER"
+          : rawDir === "CREDIT" || rawDir === "INCOME"
+          ? "CREDIT"
+          : "DEBIT";
+        const externalId =
+          parts[4] || `ext_${postedOn}_${amountCents}_${description.slice(0, 12)}`;
+
+        const existingExt = await prisma.importedExternalTransaction.findUnique({
+          where: {
+            workspaceId_providerId_accountExternalId_externalId: {
+              workspaceId,
+              providerId,
+              accountExternalId,
+              externalId,
+            },
+          },
+        });
+
+        if (existingExt) {
+          duplicateCount++;
+          continue;
+        }
+
+        await prisma.importedExternalTransaction.create({
+          data: {
+            workspaceId,
+            providerId,
+            accountExternalId,
+            externalId,
+            postedOn,
+            amountCents,
+            direction,
+            description,
+            rawHash: `${postedOn}|${amountCents}|${direction}|${externalId}`,
+            importBatchId: batch.id,
+            state: "STAGED",
+          },
+        });
+        stagedCount++;
+      }
+
+      await prisma.auditEvent.create({
+        data: {
+          workspaceId,
+          actorId,
+          action: "import.batch_staged",
+          entityType: "ImportBatch",
+          entityId: batch.id,
+          requestId,
+          metadataJson: JSON.stringify({ stagedCount, duplicateCount }),
+        },
+      });
+
+      return NextResponse.json(
+        { ok: true, batchId: batch.id, stagedCount, duplicateCount, requestId },
+        { status: 202 }
+      );
+    }
+
+    // Conciliação de item importado: Aprovar para o Ledger P01 (sem transformar transferência própria em receita!) ou Ignorar
+    if (action === "RECONCILE_IMPORTED_ROW") {
+      const { importedRowId, decision, targetAccountId } = body;
+      const item = await prisma.importedExternalTransaction.findFirst({
+        where: { id: importedRowId, workspaceId },
+      });
+      if (!item) {
+        throw new NovaDomainError("NOT_FOUND", "Item importado não encontrado.", 404);
+      }
+
+      if (decision === "IGNORE") {
+        await prisma.importedExternalTransaction.update({
+          where: { id: item.id },
+          data: { state: "IGNORED" },
+        });
+        return NextResponse.json({ ok: true, state: "IGNORED", requestId });
+      }
+
+      // Garante que exista ao menos uma conta no workspace para conciliar
+      let accId = targetAccountId;
+      if (!accId) {
+        const firstAcc = await prisma.account.findFirst({
+          where: { workspaceId, status: "ACTIVE" },
+        });
+        if (!firstAcc) {
+          const createdAcc = await prisma.account.create({
+            data: {
+              workspaceId,
+              name: "Conta Corrente Conciliada",
+              type: "CHECKING",
+              openingBalanceCents: 0,
+              openingBalanceDate: today,
+              status: "ACTIVE",
+            },
+          });
+          accId = createdAcc.id;
+        } else {
+          accId = firstAcc.id;
+        }
+      }
+
+      // Regra P04: "Conciliação: identificação de duplicatas e transferências próprias; nunca criar receita ao importar uma transferência."
+      const kind =
+        item.direction === "SELF_TRANSFER"
+          ? "TRANSFER_IN"
+          : item.direction === "CREDIT"
+          ? "INCOME"
+          : "EXPENSE";
+
+      const ledgerTx = await prisma.transaction.create({
+        data: {
+          workspaceId,
+          accountId: accId,
+          kind,
+          status: "SETTLED",
+          amountCents: item.amountCents,
+          occurredOn: item.postedOn,
+          settledOn: item.postedOn,
+          description: item.description,
+          createdBy: actorId,
+          idempotencyKey: `imp_${item.id}`,
+        },
+      });
+
+      await prisma.importedExternalTransaction.update({
+        where: { id: item.id },
+        data: {
+          state: "IMPORTED",
+          matchedLedgerEntryId: ledgerTx.id,
+        },
+      });
+
+      await prisma.auditEvent.create({
+        data: {
+          workspaceId,
+          actorId,
+          action: "import.row_reconciled",
+          entityType: "ImportedExternalTransaction",
+          entityId: item.id,
+          requestId,
+          metadataJson: JSON.stringify({
+            ledgerTransactionId: ledgerTx.id,
+            kind,
+            amount: centsToDecimalString(item.amountCents),
+          }),
+        },
+      });
+
+      return NextResponse.json({
+        ok: true,
+        state: "IMPORTED",
+        ledgerTransactionId: ledgerTx.id,
+        requestId,
+      });
+    }
+
+    if (action === "ACKNOWLEDGE_INSIGHT") {
+      const { insightId, newState = "READ" } = body;
+      await prisma.financialInsight.updateMany({
+        where: { id: insightId, workspaceId },
+        data: { state: newState },
+      });
+      return NextResponse.json({ ok: true, requestId });
     }
 
     throw new NovaDomainError("VALIDATION_ERROR", `Ação inválida: ${action}`, 400);
