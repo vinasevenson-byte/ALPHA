@@ -3,15 +3,17 @@
 @tailwind utilities;
 
 :root {
-  --nova-navy: #142D43;
-  --nova-mint: #69E2C0;
-  --nova-bg: #F4F7FA;
-  --nova-amber: #F2B766;
+  --nova-purple: #6C5CE7;
+  --nova-purple-dark: #5849BE;
+  --nova-purple-light: #EFEFFD;
+  --nova-ink: #1E1B39;
+  --nova-bg: #F5F6FA;
+  --nova-card: #FFFFFF;
 }
 
 body {
-  background-color: #F4F7FA;
-  color: #142D43;
+  background-color: #F5F6FA;
+  color: #1E1B39;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   overflow-x: hidden;
 }
@@ -27,14 +29,14 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #e2e8f0;
+  background: #ECEEF5;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #94a3b8;
+  background: #C4C8D8;
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #142D43;
+  background: #6C5CE7;
 }

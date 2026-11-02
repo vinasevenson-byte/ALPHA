@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   LayoutDashboard,
   Wallet,
@@ -22,8 +22,6 @@ import {
   Bell,
   ChevronDown,
   ChevronRight,
-  Lock,
-  Download,
   RotateCcw,
   Beaker,
   Calendar,
@@ -35,13 +33,25 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Info,
+  Calculator,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Menu,
+  X,
+  Activity,
+  PieChart,
 } from "lucide-react";
 import {
   centsToDecimalString,
   formatBRL,
   formatDateBR,
 } from "@/domain/planning";
-import { NovaInvestmentsP03View } from "@/components/NovaInvestmentsP03View";
+import {
+  NovaInvestmentsP03View,
+  PositionRow,
+  SAMPLE_P03_POSITIONS,
+  computePortfolioSummary,
+} from "@/components/NovaInvestmentsP03View";
 
 export type NovaRouteKey =
   | "visao-geral"
@@ -57,6 +67,7 @@ export type NovaRouteKey =
   | "fluxo-de-caixa"
   | "reservas"
   | "investimentos"
+  | "simulacoes"
   | "inteligencia/alertas"
   | "inteligencia/diagnostico"
   | "relatorios"
@@ -284,13 +295,26 @@ export function NovaPlatformApp({
   const [loading, setLoading] = useState(true);
   const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId);
   const [activeRoute, setActiveRoute] = useState<NovaRouteKey>(initialRoute);
-  const [horizonDays, setHorizonDays] = useState<number>(30);
+  const [horizonDays, setHorizonDays] = useState<number>(180);
   const [scenarioKind, setScenarioKind] = useState<
     "BASE" | "CONSERVATIVE" | "OPTIMISTIC"
   >("BASE");
   const [searchQuery, setSearchQuery] = useState("");
-  const [planningExpanded, setPlanningExpanded] = useState(true);
-  const [intelExpanded, setIntelExpanded] = useState(true);
+
+  // Layout Responsivo e Menu Lateral Compacto/Expansível
+  const [sidebarCompact, setSidebarCompact] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [gestaoExpanded, setGestaoExpanded] = useState(true);
+  const [compromissosExpanded, setCompromissosExpanded] = useState(false);
+  const [planningExpanded, setPlanningExpanded] = useState(false);
+  const [reservasExpanded, setReservasExpanded] = useState(false);
+  const [intelExpanded, setIntelExpanded] = useState(false);
+
+  // Integração Automática com a Carteira de Investimentos (Pacote 03)
+  const [investmentPositions, setInvestmentPositions] = useState<PositionRow[]>(
+    []
+  );
+
   const [bannerError, setBannerError] = useState<string | null>(null);
   const [bannerSuccess, setBannerSuccess] = useState<string | null>(null);
 
@@ -416,6 +440,7 @@ export function NovaPlatformApp({
   const navigateRoute = (route: NovaRouteKey, newWsId?: string) => {
     const ws = newWsId ?? workspaceId;
     setActiveRoute(route);
+    setMobileMenuOpen(false);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", `/app/${ws}/${route}`);
     }
@@ -459,12 +484,18 @@ export function NovaPlatformApp({
     }
   };
 
+  const activeWorkspaceType = state?.activeWorkspace.type ?? "PERSONAL";
+  const p03Summary = useMemo(
+    () => computePortfolioSummary(investmentPositions, activeWorkspaceType),
+    [investmentPositions, activeWorkspaceType]
+  );
+
   if (loading && !state) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#F4F7FA] text-[#142D43]">
+      <div className="flex min-h-screen items-center justify-center bg-[#F5F6FA] text-[#1E1B39]">
         <div className="flex flex-col items-center gap-3">
-          <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#142D43] border-t-[#69E2C0]" />
-          <p className="text-sm font-semibold text-[#142D43]">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#EFEFFD] border-t-[#6C5CE7]" />
+          <p className="text-sm font-semibold text-[#1E1B39]">
             Carregando NOVA — Inteligência Financeira...
           </p>
         </div>
@@ -479,11 +510,9 @@ export function NovaPlatformApp({
     activeWorkspace,
     memberships,
     accounts,
-    categories,
     transactions,
     installments,
     reserves,
-    reserveMovements,
     goals,
     budgets,
     scenarios,
@@ -499,7 +528,36 @@ export function NovaPlatformApp({
   const isZeroState =
     accounts.length === 0 &&
     transactions.length === 0 &&
-    installments.length === 0;
+    installments.length === 0 &&
+    investmentPositions.length === 0;
+
+  // Cálculo integrado do Patrimônio Líquido e Saúde Financeira (P01 + P02 + P03)
+  const netWorthCents =
+    kpis.eligibleBalanceCents +
+    p03Summary.totalEstimatedNetCents +
+    kpis.openReceivablesCents -
+    kpis.openPayablesCents;
+
+  const healthScore = (() => {
+    if (isZeroState) return null;
+    let score = 60;
+    if (kpis.minForecastBalanceCents >= 0) score += 15;
+    if (kpis.minForecastBalanceCents >= kpis.safetyBufferCents) score += 10;
+    if (kpis.totalAllocatedReservesCents > 0) score += 8;
+    if (p03Summary.totalGrossCents > 0) score += 7;
+    if (alerts.some((a) => a.severity === "CRITICAL")) score -= 25;
+    return Math.max(10, Math.min(100, score));
+  })();
+
+  const topPillar: "FINANCEIRO" | "PLANEJAMENTO" | "INVESTIMENTOS" =
+    activeRoute === "investimentos" || activeRoute === "simulacoes"
+      ? "INVESTIMENTOS"
+      : activeRoute.startsWith("planejamento") ||
+        activeRoute === "fluxo-de-caixa" ||
+        activeRoute === "reservas" ||
+        activeRoute.startsWith("inteligencia")
+      ? "PLANEJAMENTO"
+      : "FINANCEIRO";
 
   const filteredTransactions = transactions.filter((t) => {
     if (!searchQuery.trim()) return true;
@@ -517,332 +575,553 @@ export function NovaPlatformApp({
     (i) => i.direction === "RECEIVABLE"
   );
 
+  // Total para barra de Distribuição do Patrimônio
+  const totalDistributionAbs =
+    Math.max(0, kpis.eligibleBalanceCents) +
+    Math.max(0, kpis.totalAllocatedReservesCents) +
+    Math.max(0, p03Summary.totalEstimatedNetCents) +
+    Math.max(0, kpis.openPayablesCents);
+
+  // Renderizador do Menu Lateral (usado no Desktop e no Drawer Mobile)
+  const renderSidebarNav = (isCompactMode: boolean) => (
+    <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4 text-xs">
+      {/* 1. Visão Geral */}
+      <button
+        onClick={() => navigateRoute("visao-geral")}
+        title="Visão Geral"
+        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 font-semibold transition ${
+          activeRoute === "visao-geral"
+            ? "bg-[#6C5CE7] text-white shadow-sm"
+            : "text-slate-600 hover:bg-[#EFEFFD]/70 hover:text-[#6C5CE7]"
+        }`}
+      >
+        <LayoutDashboard className="h-4 w-4 shrink-0" />
+        {!isCompactMode && <span>Visão Geral</span>}
+      </button>
+
+      {/* 2. Gestão Financeira */}
+      <div>
+        <button
+          onClick={() => {
+            if (isCompactMode) {
+              navigateRoute("contas");
+            } else {
+              setGestaoExpanded(!gestaoExpanded);
+              navigateRoute("contas");
+            }
+          }}
+          title="Gestão Financeira"
+          className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 font-semibold transition ${
+            activeRoute === "contas" || activeRoute === "movimentacoes"
+              ? "bg-[#EFEFFD] text-[#6C5CE7]"
+              : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+          }`}
+        >
+          <span className="flex items-center gap-3">
+            <Wallet className="h-4 w-4 shrink-0" />
+            {!isCompactMode && <span>Gestão Financeira</span>}
+          </span>
+          {!isCompactMode &&
+            (gestaoExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ))}
+        </button>
+        {!isCompactMode && gestaoExpanded && (
+          <div className="ml-4 mt-1 space-y-1 border-l border-slate-200 pl-3">
+            <button
+              onClick={() => navigateRoute("contas")}
+              className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium transition ${
+                activeRoute === "contas"
+                  ? "bg-[#6C5CE7] font-bold text-white"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              <span>Minhas Contas</span>
+              <span className="rounded-full bg-black/10 px-1.5 py-0.2 text-[10px] tabular-nums">
+                {accounts.length}
+              </span>
+            </button>
+            <button
+              onClick={() => navigateRoute("movimentacoes")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium transition ${
+                activeRoute === "movimentacoes"
+                  ? "bg-[#6C5CE7] font-bold text-white"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Receitas, Despesas e Transf.
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 3. Contas a Pagar e Receber */}
+      <div>
+        <button
+          onClick={() => {
+            if (isCompactMode) {
+              navigateRoute("contas-a-pagar");
+            } else {
+              setCompromissosExpanded(!compromissosExpanded);
+              navigateRoute("contas-a-pagar");
+            }
+          }}
+          title="Contas a Pagar e Receber"
+          className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 font-semibold transition ${
+            activeRoute === "contas-a-pagar" ||
+            activeRoute === "contas-a-receber"
+              ? "bg-[#EFEFFD] text-[#6C5CE7]"
+              : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+          }`}
+        >
+          <span className="flex items-center gap-3">
+            <CalendarClock className="h-4 w-4 shrink-0" />
+            {!isCompactMode && <span>Contas a Pagar e Receber</span>}
+          </span>
+          {!isCompactMode &&
+            (compromissosExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ))}
+        </button>
+        {!isCompactMode && compromissosExpanded && (
+          <div className="ml-4 mt-1 space-y-1 border-l border-slate-200 pl-3">
+            <button
+              onClick={() => navigateRoute("contas-a-pagar")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
+                activeRoute === "contas-a-pagar"
+                  ? "bg-[#6C5CE7] font-bold text-white"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Contas a Pagar
+            </button>
+            <button
+              onClick={() => navigateRoute("contas-a-receber")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
+                activeRoute === "contas-a-receber"
+                  ? "bg-[#6C5CE7] font-bold text-white"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Contas a Receber
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 4. Fluxo de Caixa */}
+      <button
+        onClick={() => navigateRoute("fluxo-de-caixa")}
+        title="Fluxo de Caixa"
+        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 font-semibold transition ${
+          activeRoute === "fluxo-de-caixa"
+            ? "bg-[#6C5CE7] text-white shadow-sm"
+            : "text-slate-600 hover:bg-[#EFEFFD]/70 hover:text-[#6C5CE7]"
+        }`}
+      >
+        <LineChart className="h-4 w-4 shrink-0" />
+        {!isCompactMode && <span>Fluxo de Caixa</span>}
+      </button>
+
+      {/* 5. Planejamento */}
+      <div>
+        <button
+          onClick={() => {
+            if (isCompactMode) {
+              navigateRoute("planejamento");
+            } else {
+              setPlanningExpanded(!planningExpanded);
+              navigateRoute("planejamento");
+            }
+          }}
+          title="Planejamento"
+          className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 font-semibold transition ${
+            activeRoute.startsWith("planejamento") &&
+            activeRoute !== "planejamento/metas"
+              ? "bg-[#EFEFFD] text-[#6C5CE7]"
+              : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+          }`}
+        >
+          <span className="flex items-center gap-3">
+            <Compass className="h-4 w-4 shrink-0" />
+            {!isCompactMode && <span>Planejamento</span>}
+          </span>
+          {!isCompactMode &&
+            (planningExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ))}
+        </button>
+        {!isCompactMode && planningExpanded && (
+          <div className="ml-4 mt-1 space-y-1 border-l border-slate-200 pl-3">
+            {[
+              {
+                key: "planejamento" as NovaRouteKey,
+                label: "Visão de Planejamento",
+              },
+              {
+                key: "planejamento/orcamentos" as NovaRouteKey,
+                label: "Orçamento e Limites",
+              },
+              {
+                key: "planejamento/calendario" as NovaRouteKey,
+                label: "Calendário Financeiro",
+              },
+              {
+                key: "planejamento/cenarios" as NovaRouteKey,
+                label: "Cenários de Caixa",
+              },
+            ].map((sub) => (
+              <button
+                key={sub.key}
+                onClick={() => navigateRoute(sub.key)}
+                className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium transition ${
+                  activeRoute === sub.key
+                    ? "bg-[#6C5CE7] font-bold text-white"
+                    : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+                }`}
+              >
+                {sub.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 6. Reservas e Metas */}
+      <div>
+        <button
+          onClick={() => {
+            if (isCompactMode) {
+              navigateRoute("reservas");
+            } else {
+              setReservasExpanded(!reservasExpanded);
+              navigateRoute("reservas");
+            }
+          }}
+          title="Reservas e Metas"
+          className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 font-semibold transition ${
+            activeRoute === "reservas" || activeRoute === "planejamento/metas"
+              ? "bg-[#6C5CE7] text-white shadow-sm"
+              : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+          }`}
+        >
+          <span className="flex items-center gap-3">
+            <Shield className="h-4 w-4 shrink-0" />
+            {!isCompactMode && <span>Reservas e Metas</span>}
+          </span>
+          {!isCompactMode &&
+            (reservasExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ))}
+        </button>
+        {!isCompactMode && reservasExpanded && (
+          <div className="ml-4 mt-1 space-y-1 border-l border-slate-200 pl-3">
+            <button
+              onClick={() => navigateRoute("reservas")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
+                activeRoute === "reservas"
+                  ? "bg-[#EFEFFD] font-bold text-[#6C5CE7]"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Cofres e Capacidade (P02)
+            </button>
+            <button
+              onClick={() => navigateRoute("planejamento/metas")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
+                activeRoute === "planejamento/metas"
+                  ? "bg-[#EFEFFD] font-bold text-[#6C5CE7]"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Metas Financeiras
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 7. Investimentos */}
+      <button
+        onClick={() => navigateRoute("investimentos")}
+        title="Investimentos"
+        className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 font-semibold transition ${
+          activeRoute === "investimentos"
+            ? "bg-[#6C5CE7] text-white shadow-sm"
+            : "text-slate-600 hover:bg-[#EFEFFD]/70 hover:text-[#6C5CE7]"
+        }`}
+      >
+        <span className="flex items-center gap-3">
+          <Layers className="h-4 w-4 shrink-0" />
+          {!isCompactMode && <span>Investimentos</span>}
+        </span>
+        {!isCompactMode && (
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+              activeRoute === "investimentos"
+                ? "bg-white/20 text-white"
+                : "bg-[#EFEFFD] text-[#6C5CE7]"
+            }`}
+          >
+            P03
+          </span>
+        )}
+      </button>
+
+      {/* 8. Simulações */}
+      <button
+        onClick={() => navigateRoute("simulacoes")}
+        title="Simulações"
+        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 font-semibold transition ${
+          activeRoute === "simulacoes"
+            ? "bg-[#6C5CE7] text-white shadow-sm"
+            : "text-slate-600 hover:bg-[#EFEFFD]/70 hover:text-[#6C5CE7]"
+        }`}
+      >
+        <Calculator className="h-4 w-4 shrink-0" />
+        {!isCompactMode && <span>Simulações</span>}
+      </button>
+
+      {/* 9. Inteligência Financeira */}
+      <div>
+        <button
+          onClick={() => {
+            if (isCompactMode) {
+              navigateRoute("inteligencia/alertas");
+            } else {
+              setIntelExpanded(!intelExpanded);
+              navigateRoute("inteligencia/alertas");
+            }
+          }}
+          title="Inteligência Financeira"
+          className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 font-semibold transition ${
+            activeRoute.startsWith("inteligencia")
+              ? "bg-[#6C5CE7] text-white shadow-sm"
+              : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+          }`}
+        >
+          <span className="flex items-center gap-3">
+            <Sparkles className="h-4 w-4 shrink-0" />
+            {!isCompactMode && <span>Inteligência Financeira</span>}
+          </span>
+          {!isCompactMode &&
+            (intelExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ))}
+        </button>
+        {!isCompactMode && intelExpanded && (
+          <div className="ml-4 mt-1 space-y-1 border-l border-slate-200 pl-3">
+            <button
+              onClick={() => navigateRoute("inteligencia/alertas")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
+                activeRoute === "inteligencia/alertas"
+                  ? "bg-[#EFEFFD] font-bold text-[#6C5CE7]"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Central de Alertas ({alerts.length})
+            </button>
+            <button
+              onClick={() => navigateRoute("inteligencia/diagnostico")}
+              className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium ${
+                activeRoute === "inteligencia/diagnostico"
+                  ? "bg-[#EFEFFD] font-bold text-[#6C5CE7]"
+                  : "text-slate-600 hover:bg-[#EFEFFD]/60 hover:text-[#6C5CE7]"
+              }`}
+            >
+              Diagnóstico do Mês
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 10. Relatórios */}
+      <button
+        onClick={() => navigateRoute("relatorios")}
+        title="Relatórios"
+        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 font-semibold transition ${
+          activeRoute === "relatorios"
+            ? "bg-[#6C5CE7] text-white shadow-sm"
+            : "text-slate-600 hover:bg-[#EFEFFD]/70 hover:text-[#6C5CE7]"
+        }`}
+      >
+        <FileBarChart2 className="h-4 w-4 shrink-0" />
+        {!isCompactMode && <span>Relatórios</span>}
+      </button>
+
+      {/* 11. Administração */}
+      <button
+        onClick={() => navigateRoute("configuracoes")}
+        title="Administração"
+        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 font-semibold transition ${
+          activeRoute === "configuracoes"
+            ? "bg-[#6C5CE7] text-white shadow-sm"
+            : "text-slate-600 hover:bg-[#EFEFFD]/70 hover:text-[#6C5CE7]"
+        }`}
+      >
+        <Settings className="h-4 w-4 shrink-0" />
+        {!isCompactMode && <span>Administração</span>}
+      </button>
+    </nav>
+  );
+
   return (
-    <div className="flex min-h-screen bg-[#F4F7FA] text-[#142D43]">
+    <div className="flex min-h-screen bg-[#F5F6FA] pb-16 text-[#1E1B39] lg:pb-0">
       {/* =====================================================================
-          SIDEBAR OFICIAL NOVA (#142D43 Azul Profundo + #69E2C0 Verde Menta)
+          SIDEBAR OFICIAL NOVA — PADRÃO GLOBAL PREDICTIONS (VISUAL CLARO + ROXO)
          ===================================================================== */}
-      <aside className="hidden w-72 shrink-0 flex-col bg-[#142D43] text-white lg:flex">
+      <aside
+        className={`hidden shrink-0 flex-col border-r border-slate-200/80 bg-white transition-all duration-200 lg:flex ${
+          sidebarCompact ? "w-20" : "w-64"
+        }`}
+      >
         {/* Identidade da Marca NOVA */}
-        <div className="border-b border-white/10 p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#69E2C0] font-black text-[#142D43] shadow-md">
-                N
-              </div>
+        <div className="flex items-center justify-between border-b border-slate-100 p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#6C5CE7] to-[#5849BE] font-black text-white shadow-sm">
+              N
+            </div>
+            {!sidebarCompact && (
               <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-lg font-extrabold tracking-tight text-white">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-base font-extrabold tracking-tight text-[#1E1B39]">
                     NOVA
                   </span>
-                  <span className="rounded-full bg-[#69E2C0]/20 px-2 py-0.5 text-[10px] font-bold text-[#69E2C0]">
-                    P01 + P02
+                  <span className="rounded-full bg-[#EFEFFD] px-2 py-0.5 text-[10px] font-bold text-[#6C5CE7]">
+                    v3.0
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-300">
-                  Inteligência Financeira
+                <p className="text-[11px] text-slate-500">
+                  Portfolio &amp; Finance
                 </p>
               </div>
-            </div>
+            )}
           </div>
-          <p className="mt-2.5 text-[11px] italic text-slate-300">
-            &ldquo;Seu dinheiro organizado. Seu futuro planejado.&rdquo;
-          </p>
+          <button
+            onClick={() => setSidebarCompact(!sidebarCompact)}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-[#F5F6FA] hover:text-[#6C5CE7]"
+            title={sidebarCompact ? "Expandir menu" : "Recolher menu"}
+          >
+            {sidebarCompact ? (
+              <PanelLeftOpen className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" />
+            )}
+          </button>
         </div>
 
-        {/* Taxonomia de Navegação P01 + P02 */}
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4 text-xs">
-          <button
-            onClick={() => navigateRoute("visao-geral")}
-            className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 font-semibold transition ${
-              activeRoute === "visao-geral"
-                ? "bg-[#69E2C0] text-[#142D43] shadow-sm"
-                : "text-slate-200 hover:bg-white/10"
-            }`}
-          >
-            <LayoutDashboard className="h-4 w-4" />
-            <span>Visão Geral</span>
-          </button>
-
-          <button
-            onClick={() => navigateRoute("contas")}
-            className={`flex w-full items-center justify-between rounded-xl px-3.5 py-2.5 font-semibold transition ${
-              activeRoute === "contas"
-                ? "bg-[#69E2C0] text-[#142D43]"
-                : "text-slate-200 hover:bg-white/10"
-            }`}
-          >
-            <span className="flex items-center gap-3">
-              <Wallet className="h-4 w-4" />
-              <span>Contas e Carteiras</span>
-            </span>
-            <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] tabular-nums">
-              {accounts.length}
-            </span>
-          </button>
-
-          <button
-            onClick={() => navigateRoute("movimentacoes")}
-            className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 font-semibold transition ${
-              activeRoute === "movimentacoes"
-                ? "bg-[#69E2C0] text-[#142D43]"
-                : "text-slate-200 hover:bg-white/10"
-            }`}
-          >
-            <ArrowLeftRight className="h-4 w-4" />
-            <span>Movimentações</span>
-          </button>
-
-          {/* Menu Expansível: Planejamento (P02) */}
-          <div className="pt-1">
-            <button
-              onClick={() => {
-                setPlanningExpanded(!planningExpanded);
-                navigateRoute("planejamento");
-              }}
-              className={`flex w-full items-center justify-between rounded-xl px-3.5 py-2.5 font-semibold transition ${
-                activeRoute.startsWith("planejamento")
-                  ? "bg-white/15 text-[#69E2C0]"
-                  : "text-slate-200 hover:bg-white/10"
-              }`}
-            >
-              <span className="flex items-center gap-3">
-                <Compass className="h-4 w-4" />
-                <span>Planejamento</span>
-              </span>
-              {planningExpanded ? (
-                <ChevronDown className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5" />
-              )}
-            </button>
-
-            {planningExpanded && (
-              <div className="ml-4 mt-1 space-y-1 border-l border-white/15 pl-3">
-                {[
-                  {
-                    key: "planejamento" as NovaRouteKey,
-                    label: "Visão de Planejamento",
-                  },
-                  {
-                    key: "planejamento/orcamentos" as NovaRouteKey,
-                    label: "Orçamento e Categorias",
-                  },
-                  {
-                    key: "planejamento/calendario" as NovaRouteKey,
-                    label: "Calendário Financeiro",
-                  },
-                  {
-                    key: "planejamento/cenarios" as NovaRouteKey,
-                    label: "Cenários de Fluxo de Caixa",
-                  },
-                  {
-                    key: "planejamento/metas" as NovaRouteKey,
-                    label: "Metas Financeiras",
-                  },
-                ].map((sub) => (
-                  <button
-                    key={sub.key}
-                    onClick={() => navigateRoute(sub.key)}
-                    className={`block w-full rounded-lg px-3 py-1.5 text-left text-[11px] font-medium transition ${
-                      activeRoute === sub.key
-                        ? "bg-[#69E2C0] font-bold text-[#142D43]"
-                        : "text-slate-300 hover:bg-white/10 hover:text-white"
-                    }`}
-                  >
-                    {sub.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={() => navigateRoute("contas-a-pagar")}
-            className={`flex w-full items-center justify-between rounded-xl px-3.5 py-2.5 font-semibold transition ${
-              activeRoute === "contas-a-pagar"
-                ? "bg-[#69E2C0] text-[#142D43]"
-                : "text-slate-200 hover:bg-white/10"
-            }`}
-          >
-            <span className="flex items-center gap-3">
-              <CalendarClock className="h-4 w-4" />
-              <span>Contas a Pagar</span>
-            </span>
-            {payableInstallments.filter(
-              (i) => i.derivedStatus !== "PAID" && i.derivedStatus !== "CANCELED"
-            ).length > 0 && (
-              <span className="rounded-full bg-[#F2B766] px-2 py-0.5 text-[10px] font-bold text-[#142D43] tabular-nums">
-                {
-                  payableInstallments.filter(
-                    (i) =>
-                      i.derivedStatus !== "PAID" &&
-                      i.derivedStatus !== "CANCELED"
-                  ).length
-                }
-              </span>
-            )}
-          </button>
-
-          <button
-            onClick={() => navigateRoute("contas-a-receber")}
-            className={`flex w-full items-center justify-between rounded-xl px-3.5 py-2.5 font-semibold transition ${
-              activeRoute === "contas-a-receber"
-                ? "bg-[#69E2C0] text-[#142D43]"
-                : "text-slate-200 hover:bg-white/10"
-            }`}
-          >
-            <span className="flex items-center gap-3">
-              <Receipt className="h-4 w-4" />
-              <span>Contas a Receber</span>
-            </span>
-          </button>
-
-          <button
-            onClick={() => navigateRoute("fluxo-de-caixa")}
-            className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 font-semibold transition ${
-              activeRoute === "fluxo-de-caixa"
-                ? "bg-[#69E2C0] text-[#142D43]"
-                : "text-slate-200 hover:bg-white/10"
-            }`}
-          >
-            <LineChart className="h-4 w-4" />
-            <span>Fluxo de Caixa</span>
-          </button>
-
-          <button
-            onClick={() => navigateRoute("reservas")}
-            className={`flex w-full items-center justify-between rounded-xl px-3.5 py-2.5 font-semibold transition ${
-              activeRoute === "reservas"
-                ? "bg-[#69E2C0] text-[#142D43]"
-                : "text-slate-200 hover:bg-white/10"
-            }`}
-          >
-            <span className="flex items-center gap-3">
-              <Shield className="h-4 w-4" />
-              <span>Reservas e Cofres</span>
-            </span>
-            <span className="rounded-full bg-[#69E2C0]/20 px-2 py-0.5 text-[10px] font-bold text-[#69E2C0]">
-              P02
-            </span>
-          </button>
-
-          {/* Menu Expansível: Inteligência Financeira (P02) */}
-          <div className="pt-1">
-            <button
-              onClick={() => {
-                setIntelExpanded(!intelExpanded);
-                navigateRoute("inteligencia/alertas");
-              }}
-              className={`flex w-full items-center justify-between rounded-xl px-3.5 py-2.5 font-semibold transition ${
-                activeRoute.startsWith("inteligencia")
-                  ? "bg-white/15 text-[#69E2C0]"
-                  : "text-slate-200 hover:bg-white/10"
-              }`}
-            >
-              <span className="flex items-center gap-3">
-                <Sparkles className="h-4 w-4" />
-                <span>Inteligência Financeira</span>
-              </span>
-              {intelExpanded ? (
-                <ChevronDown className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5" />
-              )}
-            </button>
-            {intelExpanded && (
-              <div className="ml-4 mt-1 space-y-1 border-l border-white/15 pl-3">
-                <button
-                  onClick={() => navigateRoute("inteligencia/alertas")}
-                  className={`block w-full rounded-lg px-3 py-1.5 text-left text-[11px] font-medium ${
-                    activeRoute === "inteligencia/alertas"
-                      ? "bg-[#69E2C0] font-bold text-[#142D43]"
-                      : "text-slate-300 hover:bg-white/10"
-                  }`}
-                >
-                  Central de Alertas ({alerts.length})
-                </button>
-                <button
-                  onClick={() => navigateRoute("inteligencia/diagnostico")}
-                  className={`block w-full rounded-lg px-3 py-1.5 text-left text-[11px] font-medium ${
-                    activeRoute === "inteligencia/diagnostico"
-                      ? "bg-[#69E2C0] font-bold text-[#142D43]"
-                      : "text-slate-300 hover:bg-white/10"
-                  }`}
-                >
-                  Diagnóstico do Mês
-                </button>
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={() => navigateRoute("relatorios")}
-            className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 font-semibold transition ${
-              activeRoute === "relatorios"
-                ? "bg-[#69E2C0] text-[#142D43]"
-                : "text-slate-200 hover:bg-white/10"
-            }`}
-          >
-            <FileBarChart2 className="h-4 w-4" />
-            <span>Relatórios</span>
-          </button>
-
-          <button
-            onClick={() => navigateRoute("configuracoes")}
-            className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 font-semibold transition ${
-              activeRoute === "configuracoes"
-                ? "bg-[#69E2C0] text-[#142D43]"
-                : "text-slate-200 hover:bg-white/10"
-            }`}
-          >
-            <Settings className="h-4 w-4" />
-            <span>Administração e Permissões</span>
-          </button>
-
-          <button
-            onClick={() => navigateRoute("investimentos")}
-            className={`flex w-full items-center justify-between rounded-xl px-3.5 py-2.5 font-semibold transition ${
-              activeRoute === "investimentos"
-                ? "bg-[#69E2C0] text-[#142D43]"
-                : "text-slate-200 hover:bg-white/10"
-            }`}
-          >
-            <span className="flex items-center gap-3">
-              <Layers className="h-4 w-4" />
-              <span>Investimentos & Rentabilidade</span>
-            </span>
-            <span className="rounded-full bg-[#69E2C0]/20 px-2 py-0.5 text-[10px] font-bold text-[#69E2C0]">
-              P03
-            </span>
-          </button>
-        </nav>
+        {/* Taxonomia Oficial dos 11 Menus */}
+        {renderSidebarNav(sidebarCompact)}
 
         {/* Rodapé da Sidebar */}
-        <div className="border-t border-white/10 p-4 text-[11px] text-slate-300">
-          <div className="flex items-center justify-between">
-            <span className="font-semibold text-white">Papel RBAC Ativo:</span>
-            <span className="rounded bg-[#69E2C0]/20 px-2 py-0.5 font-mono text-[10px] font-bold text-[#69E2C0]">
-              {currentRole}
-            </span>
+        {!sidebarCompact && (
+          <div className="border-t border-slate-100 p-4 text-[11px] text-slate-500">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-[#1E1B39]">Perfil RBAC:</span>
+              <span className="rounded-md bg-[#EFEFFD] px-2 py-0.5 font-mono text-[10px] font-bold text-[#6C5CE7]">
+                {currentRole}
+              </span>
+            </div>
+            <p className="mt-1 text-[10px] text-slate-400">
+              {activeWorkspace.baseCurrency} • {activeWorkspace.timezone}
+            </p>
           </div>
-          <p className="mt-1 text-[10px] text-slate-400">
-            Moeda: {activeWorkspace.baseCurrency} • Fuso:{" "}
-            {activeWorkspace.timezone}
-          </p>
-        </div>
+        )}
       </aside>
 
+      {/* Drawer Mobile */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-50 flex lg:hidden">
+          <div
+            className="fixed inset-0 bg-[#1E1B39]/40 backdrop-blur-xs"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+          <div className="relative z-10 flex w-72 flex-col bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 p-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#6C5CE7] font-black text-white">
+                  N
+                </div>
+                <span className="text-base font-extrabold text-[#1E1B39]">
+                  NOVA
+                </span>
+              </div>
+              <button
+                onClick={() => setMobileMenuOpen(false)}
+                className="rounded-lg p-1.5 text-slate-500"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {renderSidebarNav(false)}
+          </div>
+        </div>
+      )}
+
       {/* =====================================================================
-          CONTEÚDO PRINCIPAL (FUNDO CLARO #F4F7FA, CARTÕES GRANDES E LIMPOS)
+          CONTEÚDO PRINCIPAL (FUNDO CINZA SUAVE #F5F6FA + CARTÕES BRANCOS)
          ===================================================================== */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Topbar Oficial NOVA */}
-        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-6 py-3.5 backdrop-blur">
-          <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-4">
-            {/* Seletor Pessoal vs Empresarial */}
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="inline-flex rounded-xl bg-[#F4F7FA] p-1 ring-1 ring-slate-200">
+        {/* Topbar Oficial NOVA com Alternância Financeiro | Planejamento | Investimentos */}
+        <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 px-4 py-3 backdrop-blur sm:px-6">
+          <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3">
+            {/* Esquerda: Menu Mobile + Alternância Superior (Financeiro, Planejamento, Investimentos) + Seletor PF/PJ */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                onClick={() => setMobileMenuOpen(true)}
+                className="rounded-xl border border-slate-200 bg-[#F5F6FA] p-2 text-[#1E1B39] lg:hidden"
+                aria-label="Abrir menu"
+              >
+                <Menu className="h-4 w-4" />
+              </button>
+
+              {/* Navegação Superior Oficial: Alternância entre Financeiro, Planejamento e Investimentos */}
+              <div className="inline-flex rounded-xl bg-[#F5F6FA] p-1 ring-1 ring-slate-200/80">
+                {[
+                  {
+                    id: "FINANCEIRO",
+                    label: "Financeiro",
+                    target: "visao-geral" as NovaRouteKey,
+                  },
+                  {
+                    id: "PLANEJAMENTO",
+                    label: "Planejamento",
+                    target: "planejamento" as NovaRouteKey,
+                  },
+                  {
+                    id: "INVESTIMENTOS",
+                    label: "Investimentos",
+                    target: "investimentos" as NovaRouteKey,
+                  },
+                ].map((tab) => {
+                  const active = topPillar === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => navigateRoute(tab.target)}
+                      className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+                        active
+                          ? "bg-[#6C5CE7] text-white shadow-xs"
+                          : "text-slate-600 hover:text-[#6C5CE7]"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Seletor Pessoal vs Empresarial */}
+              <div className="inline-flex rounded-xl bg-[#F5F6FA] p-1 ring-1 ring-slate-200/80">
                 {workspaces.map((ws) => {
                   const active = ws.id === activeWorkspace.id;
                   return (
@@ -854,16 +1133,16 @@ export function NovaPlatformApp({
                         setSettleAccountId("");
                         navigateRoute(activeRoute, ws.id);
                       }}
-                      className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
                         active
-                          ? "bg-[#142D43] text-white shadow-sm"
-                          : "text-slate-600 hover:text-[#142D43]"
+                          ? "bg-white text-[#6C5CE7] shadow-xs"
+                          : "text-slate-500 hover:text-[#1E1B39]"
                       }`}
                     >
                       {ws.type === "BUSINESS" ? (
-                        <Building2 className="h-3.5 w-3.5 text-[#69E2C0]" />
+                        <Building2 className="h-3.5 w-3.5 text-[#6C5CE7]" />
                       ) : (
-                        <User className="h-3.5 w-3.5 text-[#69E2C0]" />
+                        <User className="h-3.5 w-3.5 text-[#6C5CE7]" />
                       )}
                       <span>
                         {ws.type === "BUSINESS" ? "Empresarial" : "Pessoal"}
@@ -873,21 +1152,21 @@ export function NovaPlatformApp({
                 })}
               </div>
 
-              {/* Seletor de Horizonte / Período */}
-              <div className="inline-flex items-center gap-1 rounded-xl bg-[#F4F7FA] p-1 text-xs ring-1 ring-slate-200">
+              {/* Seletor de Horizonte (Incluindo Próximos 6 meses = 180d) */}
+              <div className="hidden items-center gap-1 rounded-xl bg-[#F5F6FA] p-1 text-xs ring-1 ring-slate-200/80 xl:inline-flex">
                 {[
-                  { days: 7, label: "7 dias" },
-                  { days: 30, label: "Este mês (30d)" },
+                  { days: 30, label: "30 dias" },
                   { days: 90, label: "90 dias" },
-                  { days: 365, label: "365 dias" },
+                  { days: 180, label: "6 meses" },
+                  { days: 365, label: "12 meses" },
                 ].map((h) => (
                   <button
                     key={h.days}
                     onClick={() => setHorizonDays(h.days)}
                     className={`rounded-lg px-2.5 py-1 font-semibold transition ${
                       horizonDays === h.days
-                        ? "bg-white text-[#142D43] shadow-sm"
-                        : "text-slate-500 hover:text-[#142D43]"
+                        ? "bg-white text-[#6C5CE7] shadow-xs"
+                        : "text-slate-500 hover:text-[#1E1B39]"
                     }`}
                   >
                     {h.label}
@@ -896,44 +1175,46 @@ export function NovaPlatformApp({
               </div>
             </div>
 
-            {/* Pesquisa Global, Homologação P02, Notificações e Ações */}
-            <div className="flex flex-wrap items-center gap-2.5">
-              <div className="relative hidden sm:block">
-                <Search className=" absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
+            {/* Direita: Pesquisa, Homologação P01+P02+P03, Alertas e Ações */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative hidden md:block">
+                <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Pesquisar lançamentos..."
+                  placeholder="Pesquisar na NOVA..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-48 rounded-xl border border-slate-200 bg-[#F4F7FA] py-1.5 pl-8 pr-3 text-xs text-[#142D43] focus:border-[#142D43] focus:bg-white focus:outline-none"
+                  className="w-44 rounded-xl border border-slate-200/80 bg-[#F5F6FA] py-1.5 pl-8 pr-3 text-xs text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
                 />
               </div>
 
-              {/* Botões para alternar rapidamente entre Estado Zero (R$ 0,00) e Fixture de Teste P02 */}
+              {/* Botão de Homologação Integrada (P01 + P02 + P03) ou Zerar */}
               {isZeroState ? (
                 <button
-                  onClick={() =>
-                    executeAction(
+                  onClick={async () => {
+                    await executeAction(
                       { action: "LOAD_P02_FIXTURE" },
-                      "Fixture de homologação P01+P02 carregada (Saldo R$ 10.000,00 / Reserva R$ 4.000,00)."
-                    )
-                  }
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#142D43]/20 bg-[#69E2C0]/25 px-3 py-1.5 text-xs font-bold text-[#142D43] hover:bg-[#69E2C0]/40"
-                  title="Preenche contas, lançamentos e obrigações de teste do Pacote 02"
+                      "Ambiente de homologação carregado (Financeiro P01 + Planejamento P02 + Carteira P03)."
+                    );
+                    setInvestmentPositions(SAMPLE_P03_POSITIONS);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#6C5CE7]/25 bg-[#EFEFFD] px-3 py-1.5 text-xs font-bold text-[#6C5CE7] transition hover:bg-[#6C5CE7]/15"
+                  title="Carrega dados de teste integrados dos Pacotes 01, 02 e 03"
                 >
                   <Beaker className="h-3.5 w-3.5" />
-                  <span>Carregar Dados de Teste (P02)</span>
+                  <span className="hidden sm:inline">Carregar Dados de Teste</span>
                 </button>
               ) : (
                 <button
-                  onClick={() =>
-                    executeAction(
+                  onClick={async () => {
+                    await executeAction(
                       { action: "RESET_TO_ZERO" },
                       "Workspace retornado ao estado inicial zerado (R$ 0,00)."
-                    )
-                  }
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                  title="Voltar para R$ 0,00 (Aguardando lançamentos)"
+                    );
+                    setInvestmentPositions([]);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  title="Voltar ao estado inicial sem dados cadastrados (R$ 0,00 / —)"
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
                   <span>Zerar (R$ 0,00)</span>
@@ -942,23 +1223,15 @@ export function NovaPlatformApp({
 
               <button
                 onClick={() => navigateRoute("inteligencia/alertas")}
-                className="relative rounded-xl border border-slate-200 bg-[#F4F7FA] p-2 text-[#142D43] hover:bg-slate-200/70"
-                title="Central de Alertas"
+                className="relative rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-2 text-[#1E1B39] hover:border-[#6C5CE7]/40"
+                title="Recomendações e Alertas"
               >
                 <Bell className="h-4 w-4" />
                 {alerts.length > 0 && (
-                  <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#F2B766] text-[10px] font-extrabold text-[#142D43]">
+                  <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#6C5CE7] text-[10px] font-extrabold text-white">
                     {alerts.length}
                   </span>
                 )}
-              </button>
-
-              <button
-                onClick={() => setShowObligationModal(true)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-[#142D43] bg-white px-3 py-1.5 text-xs font-bold text-[#142D43] hover:bg-slate-50"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>Novo Compromisso</span>
               </button>
 
               <button
@@ -969,9 +1242,9 @@ export function NovaPlatformApp({
                     setShowTxModal(true);
                   }
                 }}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-[#142D43] px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#142D43]/90"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-[#5849BE]"
               >
-                <Plus className="h-3.5 w-3.5 text-[#69E2C0]" />
+                <Plus className="h-3.5 w-3.5" />
                 <span>
                   {accounts.length === 0
                     ? "Cadastrar 1ª Conta"
@@ -983,7 +1256,7 @@ export function NovaPlatformApp({
         </header>
 
         {/* Alertas de Feedback da Operação */}
-        <div className="mx-auto w-full max-w-[1440px] px-6 pt-4">
+        <div className="mx-auto w-full max-w-[1440px] px-4 pt-4 sm:px-6">
           {bannerError && (
             <div
               role="alert"
@@ -1004,15 +1277,15 @@ export function NovaPlatformApp({
           {bannerSuccess && (
             <div
               role="status"
-              className="mb-4 flex items-center justify-between rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-xs font-medium text-emerald-950"
+              className="mb-4 flex items-center justify-between rounded-xl border border-violet-200 bg-[#EFEFFD] px-4 py-3 text-xs font-medium text-[#1E1B39]"
             >
               <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                <CheckCircle2 className="h-4 w-4 text-[#6C5CE7]" />
                 <span>{bannerSuccess}</span>
               </div>
               <button
                 onClick={() => setBannerSuccess(null)}
-                className="font-bold text-emerald-800"
+                className="font-bold text-[#6C5CE7]"
               >
                 ✕
               </button>
@@ -1021,30 +1294,36 @@ export function NovaPlatformApp({
         </div>
 
         {/* Área Principal Max-Width 1440px */}
-        <main className="mx-auto w-full max-w-[1440px] flex-1 space-y-6 px-6 py-4">
+        <main className="mx-auto w-full max-w-[1440px] flex-1 space-y-6 px-4 py-4 sm:px-6">
           {/* =================================================================
-              TELA 1: VISÃO GERAL (DASHBOARD INICIAL EM R$ 0,00 OU CALCULADO)
+              TELA 1: VISÃO GERAL — ESTRUTURA OFICIAL NOVA (GLOBAL PREDICTIONS)
              ================================================================= */}
           {activeRoute === "visao-geral" && (
             <div className="space-y-6">
-              {/* Título do Painel */}
+              {/* Cabeçalho do Dashboard Principal */}
               <div className="flex flex-wrap items-end justify-between gap-4">
                 <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Painel Financeiro •{" "}
-                    {isPJ ? "Ambiente Empresarial (PJ)" : "Ambiente Pessoal (PF)"}
-                  </span>
-                  <h1 className="text-2xl font-extrabold text-[#142D43]">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#6C5CE7]">
+                      NOVA • Visão Geral Consolidada
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {isPJ ? "Ambiente Empresarial (PJ)" : "Ambiente Pessoal (PF)"}
+                    </span>
+                  </div>
+                  <h1 className="mt-1 text-2xl font-extrabold text-[#1E1B39]">
                     {activeWorkspace.name}
                   </h1>
-                  <p className="text-xs text-slate-500">
-                    Visão consolidada das suas finanças • Dados calculados na API
-                    a partir do livro razão persistido
-                  </p>
                 </div>
 
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <span>Cenário de projeção:</span>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <button
+                    onClick={() => setShowObligationModal(true)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 font-semibold text-[#1E1B39] hover:border-[#6C5CE7]"
+                  >
+                    <Plus className="h-3.5 w-3.5 text-[#6C5CE7]" />
+                    <span>Novo Compromisso</span>
+                  </button>
                   <select
                     value={scenarioKind}
                     onChange={(e) =>
@@ -1052,382 +1331,512 @@ export function NovaPlatformApp({
                         e.target.value as "BASE" | "CONSERVATIVE" | "OPTIMISTIC"
                       )
                     }
-                    className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 font-semibold text-[#142D43]"
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 font-semibold text-[#1E1B39]"
                   >
-                    <option value="BASE">Base (Confirmado)</option>
+                    <option value="BASE">Cenário Base (Confirmado)</option>
                     <option value="CONSERVATIVE">Conservador (+Buffer)</option>
                     <option value="OPTIMISTIC">Otimista</option>
                   </select>
                 </div>
               </div>
 
-              {/* 4 Cartões Principais do Desenho Oficial NOVA (Clicáveis com Drill-down) */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {/* =============================================================
+                  SEÇÃO 3 DO MODELO OFICIAL: 3 CARTÕES DE INDICADORES PRINCIPAIS
+                  1. Saúde Financeira ("—" | Índice calculado)
+                  2. Patrimônio Líquido ("R$ 0,00" | Consolidado)
+                  3. Projeção Financeira ("—" | Próximos 6 meses)
+                 ============================================================= */}
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                {/* Cartão 1: Saúde Financeira */}
+                <div
+                  onClick={() => navigateRoute("inteligencia/diagnostico")}
+                  className="cursor-pointer rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs transition hover:border-[#6C5CE7]/50 hover:shadow-md"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Saúde Financeira
+                    </span>
+                    <span className="rounded-xl bg-[#EFEFFD] p-2 text-[#6C5CE7]">
+                      <Activity className="h-4 w-4" />
+                    </span>
+                  </div>
+                  <div className="mt-3 font-mono text-3xl font-black tabular-nums text-[#1E1B39]">
+                    {healthScore === null ? "—" : `${healthScore}/100`}
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between text-xs text-slate-500">
+                    <span>Índice calculado</span>
+                    {healthScore !== null && (
+                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+                        {healthScore >= 80
+                          ? "Excelente"
+                          : healthScore >= 60
+                          ? "Estável"
+                          : "Atenção"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Cartão 2: Patrimônio Líquido */}
                 <div
                   onClick={() => navigateRoute("contas")}
-                  className="cursor-pointer rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm transition hover:border-[#142D43]/40 hover:shadow-md"
+                  className="cursor-pointer rounded-2xl border border-[#6C5CE7]/25 bg-gradient-to-br from-[#6C5CE7] to-[#5849BE] p-6 text-white shadow-sm transition hover:shadow-md"
                 >
-                  <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
-                    <span>Saldo em contas</span>
-                    <Wallet className="h-4 w-4 text-[#142D43]" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-violet-100">
+                      Patrimônio Líquido
+                    </span>
+                    <span className="rounded-xl bg-white/15 p-2 text-white">
+                      <Wallet className="h-4 w-4" />
+                    </span>
                   </div>
-                  <div className="mt-3 font-mono text-3xl font-extrabold tabular-nums text-[#142D43]">
-                    {formatBRL(kpis.eligibleBalanceCents)}
+                  <div className="mt-3 font-mono text-3xl font-black tabular-nums text-white">
+                    {formatBRL(netWorthCents)}
                   </div>
-                  <p className="mt-1.5 text-xs text-slate-500">
-                    {accounts.length === 0
-                      ? "Aguardando lançamentos"
-                      : `${accounts.filter((a) => a.status === "ACTIVE").length} conta(s) ativa(s) conciliada(s)`}
-                  </p>
+                  <div className="mt-1.5 flex items-center justify-between text-xs text-violet-100">
+                    <span>Consolidado</span>
+                    <span>
+                      Caixa: {formatBRL(kpis.eligibleBalanceCents)} • Inv:{" "}
+                      {formatBRL(p03Summary.totalEstimatedNetCents)}
+                    </span>
+                  </div>
                 </div>
 
-                <div
-                  onClick={() => navigateRoute("movimentacoes")}
-                  className="cursor-pointer rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm transition hover:border-[#142D43]/40 hover:shadow-md"
-                >
-                  <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
-                    <span>{isPJ ? "Meus recebimentos" : "Minhas receitas"}</span>
-                    <ArrowUpRight className="h-4 w-4 text-emerald-600" />
-                  </div>
-                  <div className="mt-3 font-mono text-3xl font-extrabold tabular-nums text-emerald-700">
-                    {formatBRL(kpis.settledIncomeCents)}
-                  </div>
-                  <p className="mt-1.5 text-xs text-slate-500">
-                    {kpis.settledIncomeCents === 0 &&
-                    kpis.openReceivablesCents === 0
-                      ? "Aguardando lançamentos"
-                      : `Previsto a receber: ${formatBRL(
-                          kpis.openReceivablesCents
-                        )}`}
-                  </p>
-                </div>
-
-                <div
-                  onClick={() => navigateRoute("movimentacoes")}
-                  className="cursor-pointer rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm transition hover:border-[#142D43]/40 hover:shadow-md"
-                >
-                  <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
-                    <span>Despesas</span>
-                    <ArrowDownRight className="h-4 w-4 text-amber-600" />
-                  </div>
-                  <div className="mt-3 font-mono text-3xl font-extrabold tabular-nums text-[#142D43]">
-                    {formatBRL(kpis.settledExpenseCents)}
-                  </div>
-                  <p className="mt-1.5 text-xs text-slate-500">
-                    {kpis.settledExpenseCents === 0 &&
-                    kpis.openPayablesCents === 0
-                      ? "Aguardando lançamentos"
-                      : `A pagar em aberto: ${formatBRL(kpis.openPayablesCents)}`}
-                  </p>
-                </div>
-
+                {/* Cartão 3: Projeção Financeira */}
                 <div
                   onClick={() => navigateRoute("fluxo-de-caixa")}
-                  className="cursor-pointer rounded-2xl border border-[#142D43]/15 bg-[#142D43] p-5 text-white shadow-sm transition hover:shadow-md"
+                  className="cursor-pointer rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs transition hover:border-[#6C5CE7]/50 hover:shadow-md"
                 >
-                  <div className="flex items-center justify-between text-xs font-semibold text-[#69E2C0]">
-                    <span>Saldo projetado ({horizonDays}d)</span>
-                    <LineChart className="h-4 w-4 text-[#69E2C0]" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Projeção Financeira
+                    </span>
+                    <span className="rounded-xl bg-[#EFEFFD] p-2 text-[#6C5CE7]">
+                      <LineChart className="h-4 w-4" />
+                    </span>
                   </div>
-                  <div className="mt-3 font-mono text-3xl font-extrabold tabular-nums text-white">
-                    {formatBRL(kpis.projectedEndBalanceCents)}
-                  </div>
-                  <p className="mt-1.5 text-xs text-slate-300">
+                  <div className="mt-3 font-mono text-3xl font-black tabular-nums text-[#1E1B39]">
                     {isZeroState
-                      ? "Aguardando lançamentos"
-                      : `Menor saldo no horizonte: ${formatBRL(
-                          kpis.minForecastBalanceCents
-                        )}`}
-                  </p>
+                      ? "—"
+                      : formatBRL(kpis.projectedEndBalanceCents)}
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between text-xs text-slate-500">
+                    <span>Próximos 6 meses</span>
+                    {!isZeroState && (
+                      <span className="font-mono text-[11px] font-semibold text-[#6C5CE7]">
+                        Pmin: {formatBRL(kpis.minForecastBalanceCents)}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {/* Funcionalidade Central P02: Motor "Quanto posso reservar?" */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#142D43] text-[#69E2C0]">
-                      <Shield className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-full bg-[#69E2C0]/25 px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#142D43]">
-                          Motor de Capacidade Financeira (P02)
-                        </span>
-                        <span className="text-xs text-slate-500">
-                          Confiança: {reserveCapacityReport.confidence}
-                        </span>
-                      </div>
-                      <h2 className="mt-0.5 text-base font-extrabold text-[#142D43]">
-                        Quanto posso reservar com segurança?
-                      </h2>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => navigateRoute("reservas")}
-                      className="rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white hover:bg-[#142D43]/90"
-                    >
-                      Gerenciar Cofres e Alocações
-                    </button>
-                  </div>
-                </div>
-
-                {/* 5 Indicadores da Equação Canônica P02: S, Pmin, B, R -> Headroom */}
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                  <div className="rounded-xl bg-[#F4F7FA] p-3.5">
-                    <span className="text-[11px] font-semibold text-slate-500">
-                      1. Saldo atual (S)
-                    </span>
-                    <div className="mt-1 font-mono text-xl font-extrabold tabular-nums text-[#142D43]">
-                      {formatBRL(kpis.eligibleBalanceCents)}
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl bg-[#F4F7FA] p-3.5">
-                    <span className="text-[11px] font-semibold text-slate-500">
-                      2. Menor saldo projetado (Pmin)
-                    </span>
-                    <div className="mt-1 font-mono text-xl font-extrabold tabular-nums text-[#142D43]">
-                      {formatBRL(kpis.minForecastBalanceCents)}
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl bg-[#F4F7FA] p-3.5">
-                    <span className="text-[11px] font-semibold text-slate-500">
-                      3. Margem de segurança (B)
-                    </span>
-                    <div className="mt-1 font-mono text-xl font-extrabold tabular-nums text-amber-700">
-                      {formatBRL(kpis.safetyBufferCents)}
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl bg-[#F4F7FA] p-3.5">
-                    <span className="text-[11px] font-semibold text-slate-500">
-                      4. Reservas existentes (R)
-                    </span>
-                    <div className="mt-1 font-mono text-xl font-extrabold tabular-nums text-teal-700">
-                      {formatBRL(kpis.totalAllocatedReservesCents)}
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border-2 border-[#69E2C0] bg-[#142D43] p-3.5 text-white">
-                    <span className="text-[11px] font-bold text-[#69E2C0]">
-                      Capacidade adicional p/ reservar
-                    </span>
-                    <div className="mt-1 font-mono text-2xl font-black tabular-nums text-[#69E2C0]">
-                      {formatBRL(kpis.headroomCents)}
-                    </div>
-                  </div>
-                </div>
-
-                <p className="mt-3 text-xs text-slate-600">
-                  O cálculo considera a menor posição de caixa projetada (
-                  <code>min(S, Pmin)</code>), desconta a margem de segurança (
-                  <code>B</code>) e as reservas virtuais já alocadas (
-                  <code>R</code>), evitando contar compromissos duas vezes.
-                </p>
-              </div>
-
-              {/* Fluxo de Caixa + Próximas Contas + Reservas + Inteligência NOVA */}
+              {/* =============================================================
+                  CENTRO DO DASHBOARD: EVOLUÇÃO FINANCEIRA + RECOMENDAÇÕES
+                 ============================================================= */}
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-                {/* Fluxo de Caixa Diário */}
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-7">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                {/* Gráfico Central: Evolução Financeira (Fluxo de Caixa e Evolução Patrimonial) */}
+                <div className="flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs lg:col-span-8">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
                     <div>
-                      <h3 className="text-sm font-bold text-[#142D43]">
-                        Fluxo de caixa ({horizonDays} dias)
-                      </h3>
+                      <h2 className="text-base font-extrabold text-[#1E1B39]">
+                        Evolução Financeira
+                      </h2>
                       <p className="text-xs text-slate-500">
-                        Receitas e despesas realizadas vs previstas
+                        Fluxo de caixa projetado, entradas, saídas e evolução
+                        patrimonial consolidada
                       </p>
                     </div>
-                    <button
-                      onClick={() => navigateRoute("fluxo-de-caixa")}
-                      className="text-xs font-bold text-[#142D43] hover:underline"
-                    >
-                      Abrir projeção completa →
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => navigateRoute("fluxo-de-caixa")}
+                        className="rounded-xl bg-[#EFEFFD] px-3 py-1.5 text-xs font-bold text-[#6C5CE7] hover:bg-[#6C5CE7] hover:text-white"
+                      >
+                        Ver Fluxo Completo →
+                      </button>
+                    </div>
                   </div>
 
                   {isZeroState ? (
-                    <div className="flex flex-col items-center justify-center py-12 text-center">
-                      <LineChart className="h-8 w-8 text-slate-300" />
-                      <p className="mt-2 text-sm font-bold text-[#142D43]">
-                        Aguardando lançamentos
-                      </p>
+                    <div className="flex flex-col items-center justify-center py-14 text-center">
+                      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#EFEFFD] text-[#6C5CE7]">
+                        <LineChart className="h-7 w-7" />
+                      </div>
+                      <h3 className="mt-3 text-sm font-extrabold text-[#1E1B39]">
+                        Aguardando dados financeiros
+                      </h3>
                       <p className="mt-1 max-w-md text-xs text-slate-500">
-                        Cadastre sua primeira conta bancária e registre suas
-                        receitas, despesas ou compromissos para visualizar a curva
-                        diária de saldo.
+                        Nenhuma métrica fictícia é exibida. Cadastre sua
+                        primeira conta bancária ou carregue o cenário de
+                        homologação para visualizar a evolução patrimonial.
                       </p>
-                      <div className="mt-4 flex gap-2">
+                      <div className="mt-5 flex flex-wrap justify-center gap-2.5">
                         <button
                           onClick={() => setShowAccountModal(true)}
-                          className="rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                          className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-[#5849BE]"
                         >
                           Cadastrar Primeira Conta
                         </button>
                         <button
-                          onClick={() =>
-                            executeAction({ action: "LOAD_P02_FIXTURE" })
-                          }
-                          className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-[#142D43]"
+                          onClick={async () => {
+                            await executeAction({ action: "LOAD_P02_FIXTURE" });
+                            setInvestmentPositions(SAMPLE_P03_POSITIONS);
+                          }}
+                          className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-4 py-2 text-xs font-semibold text-[#1E1B39] hover:border-[#6C5CE7]"
                         >
-                          Testar com Cenário P02
+                          Carregar Cenário Homologado (P01+P02+P03)
                         </button>
                       </div>
                     </div>
                   ) : (
-                    <div className="mt-4 space-y-2">
-                      {forecastSeries
-                        .filter(
-                          (pt, idx) =>
-                            idx === 0 ||
-                            pt.inboundCents > 0 ||
-                            pt.outboundCents > 0 ||
-                            idx === forecastSeries.length - 1
-                        )
-                        .slice(0, 8)
-                        .map((pt, i) => (
-                          <div
-                            key={pt.date}
-                            className="flex items-center justify-between rounded-xl bg-[#F4F7FA] px-3.5 py-2.5 text-xs"
-                          >
-                            <div className="flex items-center gap-3">
-                              <span className="font-mono font-bold text-[#142D43]">
-                                {i === 0
-                                  ? `Hoje (${formatDateBR(pt.date)})`
-                                  : formatDateBR(pt.date)}
-                              </span>
-                              {pt.inboundCents > 0 && (
-                                <span className="rounded bg-emerald-100 px-2 py-0.5 font-mono text-[11px] font-semibold text-emerald-800">
-                                  +{formatBRL(pt.inboundCents)}
-                                </span>
-                              )}
-                              {pt.outboundCents > 0 && (
-                                <span className="rounded bg-amber-100 px-2 py-0.5 font-mono text-[11px] font-semibold text-amber-900">
-                                  -{formatBRL(pt.outboundCents)}
-                                </span>
-                              )}
-                            </div>
-                            <div className="font-mono font-bold tabular-nums text-[#142D43]">
-                              Saldo: {formatBRL(pt.endingCents)}
-                            </div>
+                    <div className="mt-5 space-y-4">
+                      {/* Barra Visual de Evolução Temporal estilo Global Predictions */}
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        <div className="rounded-xl bg-[#F5F6FA] p-3">
+                          <span className="text-[11px] text-slate-500">
+                            Saldo em Contas (S)
+                          </span>
+                          <div className="mt-0.5 font-mono text-sm font-extrabold text-[#1E1B39]">
+                            {formatBRL(kpis.eligibleBalanceCents)}
                           </div>
-                        ))}
+                        </div>
+                        <div className="rounded-xl bg-[#F5F6FA] p-3">
+                          <span className="text-[11px] text-slate-500">
+                            {isPJ ? "Recebimentos" : "Receitas Realizadas"}
+                          </span>
+                          <div className="mt-0.5 font-mono text-sm font-extrabold text-emerald-600">
+                            +{formatBRL(kpis.settledIncomeCents)}
+                          </div>
+                        </div>
+                        <div className="rounded-xl bg-[#F5F6FA] p-3">
+                          <span className="text-[11px] text-slate-500">
+                            Despesas Realizadas
+                          </span>
+                          <div className="mt-0.5 font-mono text-sm font-extrabold text-rose-600">
+                            -{formatBRL(kpis.settledExpenseCents)}
+                          </div>
+                        </div>
+                        <div className="rounded-xl bg-[#EFEFFD] p-3">
+                          <span className="text-[11px] font-bold text-[#6C5CE7]">
+                            Capacidade de Reserva
+                          </span>
+                          <div className="mt-0.5 font-mono text-sm font-black text-[#6C5CE7]">
+                            {formatBRL(kpis.headroomCents)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Série Visual de Pontos Relevantes do Fluxo de Caixa */}
+                      <div className="space-y-2">
+                        {forecastSeries
+                          .filter(
+                            (pt, idx) =>
+                              idx === 0 ||
+                              pt.inboundCents > 0 ||
+                              pt.outboundCents > 0 ||
+                              idx === forecastSeries.length - 1
+                          )
+                          .slice(0, 7)
+                          .map((pt, i) => {
+                            const maxRef = Math.max(
+                              1,
+                              kpis.eligibleBalanceCents,
+                              pt.endingCents
+                            );
+                            const barPct = Math.max(
+                              8,
+                              Math.min(
+                                100,
+                                Math.round((pt.endingCents / maxRef) * 100)
+                              )
+                            );
+                            return (
+                              <div
+                                key={pt.date}
+                                className="rounded-xl bg-[#F5F6FA] p-3 text-xs"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2.5">
+                                    <span className="font-mono font-bold text-[#1E1B39]">
+                                      {i === 0
+                                        ? `Hoje (${formatDateBR(pt.date)})`
+                                        : formatDateBR(pt.date)}
+                                    </span>
+                                    {pt.inboundCents > 0 && (
+                                      <span className="rounded-md bg-emerald-100 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-800">
+                                        +{formatBRL(pt.inboundCents)}
+                                      </span>
+                                    )}
+                                    {pt.outboundCents > 0 && (
+                                      <span className="rounded-md bg-rose-100 px-2 py-0.5 font-mono text-[10px] font-bold text-rose-800">
+                                        -{formatBRL(pt.outboundCents)}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="font-mono font-extrabold tabular-nums text-[#6C5CE7]">
+                                    {formatBRL(pt.endingCents)}
+                                  </span>
+                                </div>
+                                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                                  <div
+                                    style={{ width: `${barPct}%` }}
+                                    className="h-full rounded-full bg-[#6C5CE7]"
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* Coluna Direita: Próximas Contas, Reservas e Inteligência NOVA */}
-                <div className="space-y-4 lg:col-span-5">
-                  {/* Próximas Contas */}
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-bold text-[#142D43]">
-                        Próximas contas
-                      </h3>
-                      <button
-                        onClick={() => navigateRoute("contas-a-pagar")}
-                        className="text-xs font-semibold text-[#142D43] hover:underline"
-                      >
-                        Ver compromissos
-                      </button>
-                    </div>
-                    {installments.filter(
-                      (i) =>
-                        i.derivedStatus !== "PAID" &&
-                        i.derivedStatus !== "CANCELED"
-                    ).length === 0 ? (
-                      <p className="mt-3 text-xs text-slate-500">
-                        Nenhum compromisso cadastrado
-                      </p>
-                    ) : (
-                      <div className="mt-3 space-y-2">
-                        {installments
-                          .filter(
-                            (i) =>
-                              i.derivedStatus !== "PAID" &&
-                              i.derivedStatus !== "CANCELED"
-                          )
-                          .slice(0, 4)
-                          .map((inst) => (
-                            <div
-                              key={inst.id}
-                              className="flex items-center justify-between rounded-xl bg-[#F4F7FA] px-3 py-2 text-xs"
-                            >
-                              <div>
-                                <div className="font-bold text-[#142D43]">
-                                  {inst.obligationTitle} ({inst.number}/
-                                  {inst.totalInstallments})
-                                </div>
-                                <div className="text-[11px] text-slate-500">
-                                  Venc: {formatDateBR(inst.dueOn)}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono font-bold tabular-nums text-[#142D43]">
-                                  {formatBRL(inst.outstandingCents)}
-                                </span>
-                                <button
-                                  onClick={() => {
-                                    setSettlementTarget(inst);
-                                    setSettleAmountDecimal(
-                                      centsToDecimalString(inst.outstandingCents)
-                                    );
-                                  }}
-                                  className="rounded-lg bg-[#142D43] px-2.5 py-1 text-[10px] font-bold text-white"
-                                >
-                                  Baixar
-                                </button>
-                              </div>
-                            </div>
-                          ))}
+                {/* Painel Direito: Recomendações (Alertas de caixa, Oportunidades de reserva, Análise de investimentos) */}
+                <div className="flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs lg:col-span-4">
+                  <div>
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-xl bg-[#EFEFFD] p-2 text-[#6C5CE7]">
+                          <Sparkles className="h-4 w-4" />
+                        </span>
+                        <div>
+                          <h2 className="text-base font-extrabold text-[#1E1B39]">
+                            Recomendações
+                          </h2>
+                          <p className="text-[11px] text-slate-500">
+                            Inteligência financeira e oportunidades
+                          </p>
+                        </div>
                       </div>
-                    )}
+                    </div>
+
+                    <div className="mt-4 space-y-3">
+                      {/* Bloco 1: Alertas de caixa */}
+                      <div
+                        onClick={() => navigateRoute("inteligencia/alertas")}
+                        className="cursor-pointer rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-4 transition hover:border-[#6C5CE7] hover:bg-white"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-extrabold text-[#1E1B39]">
+                            Alertas de caixa
+                          </span>
+                          <span className="rounded-full bg-[#EFEFFD] px-2 py-0.5 text-[10px] font-bold text-[#6C5CE7]">
+                            {alerts.length} ativo(s)
+                          </span>
+                        </div>
+                        <p className="mt-1.5 text-xs text-slate-600">
+                          {isZeroState
+                            ? "Sem alertas de liquidez. Cadastre compromissos para monitorar vencimentos."
+                            : alerts.length > 0
+                            ? alerts[0].message
+                            : `Fluxo positivo no horizonte. Menor saldo projetado: ${formatBRL(
+                                kpis.minForecastBalanceCents
+                              )}.`}
+                        </p>
+                      </div>
+
+                      {/* Bloco 2: Oportunidades de reserva */}
+                      <div
+                        onClick={() => navigateRoute("reservas")}
+                        className="cursor-pointer rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-4 transition hover:border-[#6C5CE7] hover:bg-white"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-extrabold text-[#1E1B39]">
+                            Oportunidades de reserva
+                          </span>
+                          <span className="font-mono text-xs font-bold text-[#6C5CE7]">
+                            {formatBRL(kpis.headroomCents)}
+                          </span>
+                        </div>
+                        <p className="mt-1.5 text-xs text-slate-600">
+                          {isZeroState
+                            ? "Aguardando lançamentos para calcular sua margem segura de reserva (P02)."
+                            : `Você pode alocar até ${formatBRL(
+                                kpis.headroomCents
+                              )} em cofres preservando sua margem de segurança de ${formatBRL(
+                                kpis.safetyBufferCents
+                              )}.`}
+                        </p>
+                      </div>
+
+                      {/* Bloco 3: Análise de investimentos */}
+                      <div
+                        onClick={() => navigateRoute("investimentos")}
+                        className="cursor-pointer rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-4 transition hover:border-[#6C5CE7] hover:bg-white"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-extrabold text-[#1E1B39]">
+                            Análise de investimentos
+                          </span>
+                          <span className="rounded-full bg-[#EFEFFD] px-2 py-0.5 text-[10px] font-bold text-[#6C5CE7]">
+                            Comparador P03
+                          </span>
+                        </div>
+                        <p className="mt-1.5 text-xs text-slate-600">
+                          {investmentPositions.length === 0
+                            ? "Compare CDB, LCI/LCA e Tesouro Selic líquidos de IR ou registre sua carteira."
+                            : `Carteira ativa de ${formatBRL(
+                                p03Summary.totalGrossCents
+                              )} com retorno bruto de +${
+                                p03Summary.returnPct
+                              }%.`}
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Reservas */}
-                  <div
-                    onClick={() => navigateRoute("reservas")}
-                    className="cursor-pointer rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-[#142D43]/40"
+                  <button
+                    onClick={() => navigateRoute("simulacoes")}
+                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#6C5CE7] py-2.5 text-xs font-bold text-white shadow-xs transition hover:bg-[#5849BE]"
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-bold text-[#142D43]">
-                        Reservas
-                      </span>
-                      <Shield className="h-4 w-4 text-[#142D43]" />
+                    <Calculator className="h-4 w-4" />
+                    <span>Abrir Simulador Patrimonial</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* =============================================================
+                  DISTRIBUIÇÃO DO PATRIMÔNIO (CONTAS, RESERVAS, INVESTIMENTOS E OBRIGAÇÕES)
+                 ============================================================= */}
+              <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs">
+                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="rounded-xl bg-[#EFEFFD] p-2 text-[#6C5CE7]">
+                      <PieChart className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <h2 className="text-base font-extrabold text-[#1E1B39]">
+                        Distribuição do Patrimônio
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        Contas bancárias, reservas, investimentos e obrigações
+                      </p>
                     </div>
-                    <div className="mt-2 font-mono text-2xl font-extrabold tabular-nums text-[#142D43]">
-                      {formatBRL(kpis.totalAllocatedReservesCents)}
+                  </div>
+
+                  <span className="text-xs font-semibold text-slate-500">
+                    Composição integrada em tempo real (P01 + P02 + P03)
+                  </span>
+                </div>
+
+                {/* Barra de Proporção Visual */}
+                <div className="mt-4 flex h-3 w-full overflow-hidden rounded-full bg-[#F5F6FA]">
+                  {totalDistributionAbs === 0 ? (
+                    <div className="h-full w-full bg-slate-200" />
+                  ) : (
+                    <>
+                      <div
+                        style={{
+                          width: `${
+                            (Math.max(0, kpis.eligibleBalanceCents) /
+                              totalDistributionAbs) *
+                            100
+                          }%`,
+                        }}
+                        className="h-full bg-[#6C5CE7]"
+                        title="Contas Bancárias"
+                      />
+                      <div
+                        style={{
+                          width: `${
+                            (Math.max(0, kpis.totalAllocatedReservesCents) /
+                              totalDistributionAbs) *
+                            100
+                          }%`,
+                        }}
+                        className="h-full bg-[#A29BFE]"
+                        title="Reservas"
+                      />
+                      <div
+                        style={{
+                          width: `${
+                            (Math.max(0, p03Summary.totalEstimatedNetCents) /
+                              totalDistributionAbs) *
+                            100
+                          }%`,
+                        }}
+                        className="h-full bg-emerald-500"
+                        title="Investimentos"
+                      />
+                      <div
+                        style={{
+                          width: `${
+                            (Math.max(0, kpis.openPayablesCents) /
+                              totalDistributionAbs) *
+                            100
+                          }%`,
+                        }}
+                        className="h-full bg-amber-500"
+                        title="Obrigações"
+                      />
+                    </>
+                  )}
+                </div>
+
+                {/* 4 Blocos Clicáveis da Distribuição */}
+                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div
+                    onClick={() => navigateRoute("contas")}
+                    className="cursor-pointer rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-4 transition hover:border-[#6C5CE7] hover:bg-white"
+                  >
+                    <div className="flex items-center gap-2 text-xs font-bold text-[#1E1B39]">
+                      <span className="h-2.5 w-2.5 rounded-full bg-[#6C5CE7]" />
+                      <span>Contas bancárias</span>
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {reserves.length === 0
-                        ? "Metas ainda não cadastradas"
-                        : `${reserves.length} cofre(s) ativo(s) • Livre não alocado: ${formatBRL(
-                            kpis.freeCashCents
-                          )}`}
+                    <div className="mt-2 font-mono text-xl font-extrabold tabular-nums text-[#1E1B39]">
+                      {formatBRL(kpis.eligibleBalanceCents)}
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      {accounts.length} conta(s) cadastrada(s)
                     </p>
                   </div>
 
-                  {/* Inteligência NOVA */}
-                  <div className="rounded-2xl border border-[#69E2C0]/60 bg-[#142D43] p-5 text-white shadow-sm">
-                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#69E2C0]">
-                      <Sparkles className="h-4 w-4" />
-                      <span>Inteligência NOVA</span>
+                  <div
+                    onClick={() => navigateRoute("reservas")}
+                    className="cursor-pointer rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-4 transition hover:border-[#6C5CE7] hover:bg-white"
+                  >
+                    <div className="flex items-center gap-2 text-xs font-bold text-[#1E1B39]">
+                      <span className="h-2.5 w-2.5 rounded-full bg-[#A29BFE]" />
+                      <span>Reservas</span>
                     </div>
-                    <p className="mt-2 text-xs leading-relaxed text-slate-200">
-                      {isZeroState
-                        ? "Cadastre suas contas, receitas e despesas. A NOVA utilizará esses dados para calcular seu saldo futuro e identificar possibilidades de economia e reserva."
-                        : `Seu saldo livre pós-reservas é de ${formatBRL(
-                            kpis.freeCashCents
-                          )}. Considerando os compromissos futuros e sua margem de segurança de ${formatBRL(
-                            kpis.safetyBufferCents
-                          )}, você pode alocar até ${formatBRL(
-                            kpis.headroomCents
-                          )} adicionalmente em cofres.`}
+                    <div className="mt-2 font-mono text-xl font-extrabold tabular-nums text-[#1E1B39]">
+                      {formatBRL(kpis.totalAllocatedReservesCents)}
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      {reserves.length} cofre(s) • Capacidade:{" "}
+                      {formatBRL(kpis.headroomCents)}
+                    </p>
+                  </div>
+
+                  <div
+                    onClick={() => navigateRoute("investimentos")}
+                    className="cursor-pointer rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-4 transition hover:border-[#6C5CE7] hover:bg-white"
+                  >
+                    <div className="flex items-center gap-2 text-xs font-bold text-[#1E1B39]">
+                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                      <span>Investimentos</span>
+                    </div>
+                    <div className="mt-2 font-mono text-xl font-extrabold tabular-nums text-[#1E1B39]">
+                      {formatBRL(p03Summary.totalEstimatedNetCents)}
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      {investmentPositions.length} posição(ões) ativa(s)
+                    </p>
+                  </div>
+
+                  <div
+                    onClick={() => navigateRoute("contas-a-pagar")}
+                    className="cursor-pointer rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-4 transition hover:border-[#6C5CE7] hover:bg-white"
+                  >
+                    <div className="flex items-center gap-2 text-xs font-bold text-[#1E1B39]">
+                      <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+                      <span>Obrigações</span>
+                    </div>
+                    <div className="mt-2 font-mono text-xl font-extrabold tabular-nums text-[#1E1B39]">
+                      {formatBRL(kpis.openPayablesCents)}
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      A receber previsto: {formatBRL(kpis.openReceivablesCents)}
                     </p>
                   </div>
                 </div>
@@ -1440,31 +1849,29 @@ export function NovaPlatformApp({
              ================================================================= */}
           {activeRoute === "contas" && (
             <div className="space-y-6">
-              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
                 <div>
-                  <h2 className="text-lg font-extrabold text-[#142D43]">
+                  <h2 className="text-lg font-extrabold text-[#1E1B39]">
                     Contas e Carteiras ({activeWorkspace.name})
                   </h2>
                   <p className="text-xs text-slate-500">
                     Invariante P01: Saldo atual = saldo inicial + receitas
                     liquidadas − despesas liquidadas ± transferências liquidadas.
-                    Contas com movimentos liquidados são arquivadas, nunca
-                    excluídas fisicamente.
                   </p>
                 </div>
                 <button
                   onClick={() => setShowAccountModal(true)}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-[#5849BE]"
                 >
-                  <Plus className="h-4 w-4 text-[#69E2C0]" />
+                  <Plus className="h-4 w-4" />
                   Nova Conta
                 </button>
               </div>
 
               {accounts.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
-                  <Wallet className="mx-auto h-8 w-8 text-slate-400" />
-                  <h3 className="mt-2 text-sm font-bold text-[#142D43]">
+                  <Wallet className="mx-auto h-8 w-8 text-[#6C5CE7]" />
+                  <h3 className="mt-2 text-sm font-bold text-[#1E1B39]">
                     Cadastre sua primeira conta
                   </h3>
                   <p className="mt-1 text-xs text-slate-500">
@@ -1473,7 +1880,7 @@ export function NovaPlatformApp({
                   </p>
                   <button
                     onClick={() => setShowAccountModal(true)}
-                    className="mt-4 rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                    className="mt-4 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
                   >
                     Criar Conta Agora
                   </button>
@@ -1483,24 +1890,24 @@ export function NovaPlatformApp({
                   {accounts.map((acc) => (
                     <div
                       key={acc.id}
-                      className={`rounded-2xl border bg-white p-5 shadow-sm ${
+                      className={`rounded-2xl border bg-white p-5 shadow-xs ${
                         acc.status === "ARCHIVED"
                           ? "border-slate-200 opacity-60"
-                          : "border-slate-200"
+                          : "border-slate-200/80"
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="rounded-full bg-[#F4F7FA] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#142D43]">
+                        <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#6C5CE7]">
                           {acc.type} • {acc.status}
                         </span>
                         <span className="text-xs text-slate-400">
                           {acc.institution || "Sem instituição"}
                         </span>
                       </div>
-                      <h3 className="mt-3 text-base font-extrabold text-[#142D43]">
+                      <h3 className="mt-3 text-base font-extrabold text-[#1E1B39]">
                         {acc.name}
                       </h3>
-                      <div className="mt-3 font-mono text-2xl font-black tabular-nums text-[#142D43]">
+                      <div className="mt-3 font-mono text-2xl font-black tabular-nums text-[#1E1B39]">
                         {formatBRL(acc.currentBalanceCents)}
                       </div>
                       <p className="mt-1 text-[11px] text-slate-500">
@@ -1542,9 +1949,9 @@ export function NovaPlatformApp({
              ================================================================= */}
           {activeRoute === "movimentacoes" && (
             <div className="space-y-6">
-              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
                 <div>
-                  <h2 className="text-lg font-extrabold text-[#142D43]">
+                  <h2 className="text-lg font-extrabold text-[#1E1B39]">
                     Movimentações e Transferências Internas
                   </h2>
                   <p className="text-xs text-slate-500">
@@ -1556,7 +1963,7 @@ export function NovaPlatformApp({
                   <button
                     onClick={() => setShowTransferModal(true)}
                     disabled={accounts.length < 2}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#142D43] bg-white px-3.5 py-2 text-xs font-bold text-[#142D43] disabled:opacity-40"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#6C5CE7] bg-white px-3.5 py-2 text-xs font-bold text-[#6C5CE7] disabled:opacity-40"
                   >
                     <ArrowLeftRight className="h-3.5 w-3.5" />
                     Transferência entre Contas
@@ -1564,140 +1971,144 @@ export function NovaPlatformApp({
                   <button
                     onClick={() => setShowTxModal(true)}
                     disabled={accounts.length === 0}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white disabled:opacity-40"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white disabled:opacity-40"
                   >
-                    <Plus className="h-3.5 w-3.5 text-[#69E2C0]" />
+                    <Plus className="h-3.5 w-3.5" />
                     Registrar Receita / Despesa
                   </button>
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                <table className="w-full text-left text-xs">
-                  <thead className="border-b border-slate-200 bg-[#F4F7FA] text-[11px] font-bold uppercase text-slate-600">
-                    <tr>
-                      <th className="px-4 py-3">Data</th>
-                      <th className="px-4 py-3">Descrição</th>
-                      <th className="px-4 py-3">Tipo</th>
-                      <th className="px-4 py-3">Conta</th>
-                      <th className="px-4 py-3">Status</th>
-                      <th className="px-4 py-3 text-right">Valor (BRL)</th>
-                      <th className="px-4 py-3 text-right">Ações Auditáveis</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredTransactions.length === 0 ? (
+              <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xs">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b border-slate-200/80 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                       <tr>
-                        <td
-                          colSpan={7}
-                          className="px-4 py-8 text-center text-slate-500"
-                        >
-                          Nenhuma movimentação registrada neste workspace.
-                        </td>
+                        <th className="px-4 py-3">Data</th>
+                        <th className="px-4 py-3">Descrição</th>
+                        <th className="px-4 py-3">Tipo</th>
+                        <th className="px-4 py-3">Conta</th>
+                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3 text-right">Valor (BRL)</th>
+                        <th className="px-4 py-3 text-right">Ações Auditáveis</th>
                       </tr>
-                    ) : (
-                      filteredTransactions.map((tx) => (
-                        <tr
-                          key={tx.id}
-                          className={
-                            tx.status === "CANCELED" ? "opacity-50 line-through" : ""
-                          }
-                        >
-                          <td className="px-4 py-3 font-mono text-[11px]">
-                            {formatDateBR(tx.occurredOn)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="font-bold text-[#142D43]">
-                              {tx.description}
-                            </div>
-                            {tx.costCenter && (
-                              <span className="text-[10px] text-slate-500">
-                                Centro: {tx.costCenter}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="rounded bg-[#F4F7FA] px-2 py-0.5 font-mono text-[10px] font-bold text-[#142D43]">
-                              {tx.kind}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">{tx.account?.name}</td>
-                          <td className="px-4 py-3">
-                            <span
-                              className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                                tx.status === "SETTLED"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : tx.status === "PENDING"
-                                  ? "bg-amber-100 text-amber-900"
-                                  : "bg-slate-200 text-slate-600"
-                              }`}
-                            >
-                              {tx.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right font-mono font-bold tabular-nums">
-                            {tx.kind === "INCOME" || tx.kind === "TRANSFER_IN"
-                              ? "+"
-                              : "-"}
-                            {formatBRL(tx.amountCents)}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="inline-flex gap-2">
-                              {tx.status === "PENDING" && (
-                                <button
-                                  onClick={() =>
-                                    executeAction(
-                                      {
-                                        action: "SETTLE_TRANSACTION",
-                                        transactionId: tx.id,
-                                      },
-                                      "Lançamento liquidado com sucesso."
-                                    )
-                                  }
-                                  className="rounded-lg bg-[#142D43] px-2.5 py-1 text-[10px] font-bold text-white"
-                                >
-                                  Liquidar
-                                </button>
-                              )}
-                              {tx.status !== "CANCELED" && (
-                                <button
-                                  onClick={() =>
-                                    executeAction(
-                                      {
-                                        action: "CANCEL_TRANSACTION",
-                                        transactionId: tx.id,
-                                        reason:
-                                          "Estorno/cancelamento contábil com preservação de histórico",
-                                      },
-                                      "Lançamento cancelado (histórico preservado)."
-                                    )
-                                  }
-                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-semibold text-rose-800"
-                                >
-                                  <Ban className="h-3 w-3" />
-                                  Estornar
-                                </button>
-                              )}
-                            </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredTransactions.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={7}
+                            className="px-4 py-8 text-center text-slate-500"
+                          >
+                            Nenhuma movimentação registrada neste workspace.
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : (
+                        filteredTransactions.map((tx) => (
+                          <tr
+                            key={tx.id}
+                            className={
+                              tx.status === "CANCELED"
+                                ? "opacity-50 line-through"
+                                : ""
+                            }
+                          >
+                            <td className="px-4 py-3 font-mono text-[11px]">
+                              {formatDateBR(tx.occurredOn)}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="font-bold text-[#1E1B39]">
+                                {tx.description}
+                              </div>
+                              {tx.costCenter && (
+                                <span className="text-[10px] text-slate-500">
+                                  Centro: {tx.costCenter}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="rounded-lg bg-[#EFEFFD] px-2 py-0.5 font-mono text-[10px] font-bold text-[#6C5CE7]">
+                                {tx.kind}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">{tx.account?.name}</td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                                  tx.status === "SETTLED"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : tx.status === "PENDING"
+                                    ? "bg-amber-100 text-amber-900"
+                                    : "bg-slate-200 text-slate-600"
+                                }`}
+                              >
+                                {tx.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono font-bold tabular-nums">
+                              {tx.kind === "INCOME" || tx.kind === "TRANSFER_IN"
+                                ? "+"
+                                : "-"}
+                              {formatBRL(tx.amountCents)}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <div className="inline-flex gap-2">
+                                {tx.status === "PENDING" && (
+                                  <button
+                                    onClick={() =>
+                                      executeAction(
+                                        {
+                                          action: "SETTLE_TRANSACTION",
+                                          transactionId: tx.id,
+                                        },
+                                        "Lançamento liquidado com sucesso."
+                                      )
+                                    }
+                                    className="rounded-lg bg-[#6C5CE7] px-2.5 py-1 text-[10px] font-bold text-white"
+                                  >
+                                    Liquidar
+                                  </button>
+                                )}
+                                {tx.status !== "CANCELED" && (
+                                  <button
+                                    onClick={() =>
+                                      executeAction(
+                                        {
+                                          action: "CANCEL_TRANSACTION",
+                                          transactionId: tx.id,
+                                          reason:
+                                            "Estorno/cancelamento contábil com preservação de histórico",
+                                        },
+                                        "Lançamento cancelado (histórico preservado)."
+                                      )
+                                    }
+                                    className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-semibold text-rose-800"
+                                  >
+                                    <Ban className="h-3 w-3" />
+                                    Estornar
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
 
           {/* =================================================================
-              TELAS B e C (P02): CONTAS A PAGAR E CONTAS A RECEBER (PARCELAS E BAIXAS)
+              TELAS B e C (P02): CONTAS A PAGAR E CONTAS A RECEBER
              ================================================================= */}
           {(activeRoute === "contas-a-pagar" ||
             activeRoute === "contas-a-receber") && (
             <div className="space-y-6">
-              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
                 <div>
-                  <h2 className="text-lg font-extrabold text-[#142D43]">
+                  <h2 className="text-lg font-extrabold text-[#1E1B39]">
                     {activeRoute === "contas-a-pagar"
                       ? "Contas a Pagar — Obrigações, Parcelas e Baixas (P02)"
                       : "Contas a Receber — Previsões, Clientes e Recebíveis (P02)"}
@@ -1707,127 +2118,146 @@ export function NovaPlatformApp({
                     parcial ou integral vinculada atomicamente ao Ledger P01.
                   </p>
                 </div>
-                <button
-                  onClick={() => {
-                    setObDirection(
-                      activeRoute === "contas-a-receber"
-                        ? "RECEIVABLE"
-                        : "PAYABLE"
-                    );
-                    setShowObligationModal(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
-                >
-                  <Plus className="h-4 w-4 text-[#69E2C0]" />
-                  {activeRoute === "contas-a-receber"
-                    ? "Novo Recebível / Parcelamento"
-                    : "Nova Conta a Pagar / Parcelamento"}
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() =>
+                      navigateRoute(
+                        activeRoute === "contas-a-pagar"
+                          ? "contas-a-receber"
+                          : "contas-a-pagar"
+                      )
+                    }
+                    className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3.5 py-2 text-xs font-bold text-[#1E1B39]"
+                  >
+                    Alternar para{" "}
+                    {activeRoute === "contas-a-pagar"
+                      ? "Contas a Receber"
+                      : "Contas a Pagar"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setObDirection(
+                        activeRoute === "contas-a-receber"
+                          ? "RECEIVABLE"
+                          : "PAYABLE"
+                      );
+                      setShowObligationModal(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
+                  >
+                    <Plus className="h-4 w-4" />
+                    {activeRoute === "contas-a-receber"
+                      ? "Novo Recebível"
+                      : "Nova Conta a Pagar"}
+                  </button>
+                </div>
               </div>
 
-              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                <table className="w-full text-left text-xs">
-                  <thead className="border-b border-slate-200 bg-[#F4F7FA] text-[11px] font-bold uppercase text-slate-600">
-                    <tr>
-                      <th className="px-4 py-3">Vencimento</th>
-                      <th className="px-4 py-3">Obrigação / Contraparte</th>
-                      <th className="px-4 py-3">Parcela</th>
-                      <th className="px-4 py-3">Categoria</th>
-                      <th className="px-4 py-3">Status Derivado</th>
-                      <th className="px-4 py-3 text-right">Valor Original</th>
-                      <th className="px-4 py-3 text-right">Saldo em Aberto</th>
-                      <th className="px-4 py-3 text-right">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {(activeRoute === "contas-a-pagar"
-                      ? payableInstallments
-                      : receivableInstallments
-                    ).length === 0 ? (
+              <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xs">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b border-slate-200/80 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                       <tr>
-                        <td
-                          colSpan={8}
-                          className="px-4 py-8 text-center text-slate-500"
-                        >
-                          Nenhum compromisso registrado nesta visão.
-                        </td>
+                        <th className="px-4 py-3">Vencimento</th>
+                        <th className="px-4 py-3">Obrigação / Contraparte</th>
+                        <th className="px-4 py-3">Parcela</th>
+                        <th className="px-4 py-3">Categoria</th>
+                        <th className="px-4 py-3">Status Derivado</th>
+                        <th className="px-4 py-3 text-right">Valor Original</th>
+                        <th className="px-4 py-3 text-right">Saldo em Aberto</th>
+                        <th className="px-4 py-3 text-right">Ações</th>
                       </tr>
-                    ) : (
-                      (activeRoute === "contas-a-pagar"
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(activeRoute === "contas-a-pagar"
                         ? payableInstallments
                         : receivableInstallments
-                      ).map((inst) => (
-                        <tr key={inst.id}>
-                          <td className="px-4 py-3 font-mono text-[11px] font-bold">
-                            {formatDateBR(inst.dueOn)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="font-bold text-[#142D43]">
-                              {inst.obligationTitle}
-                            </div>
-                            {inst.counterparty && (
-                              <div className="text-[11px] text-slate-500">
-                                {inst.counterparty}
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 font-mono">
-                            {inst.number}/{inst.totalInstallments}
-                          </td>
-                          <td className="px-4 py-3">{inst.categoryName}</td>
-                          <td className="px-4 py-3">
-                            <span
-                              className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                                inst.derivedStatus === "PAID"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : inst.derivedStatus === "PARTIAL"
-                                  ? "bg-sky-100 text-sky-900"
-                                  : inst.derivedStatus === "OVERDUE"
-                                  ? "bg-rose-100 text-rose-800"
-                                  : "bg-amber-100 text-amber-900"
-                              }`}
-                            >
-                              {inst.derivedStatus}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-600">
-                            {formatBRL(inst.amountCents)}
-                          </td>
-                          <td className="px-4 py-3 text-right font-mono font-bold tabular-nums text-[#142D43]">
-                            {formatBRL(inst.outstandingCents)}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            {inst.outstandingCents > 0 && (
-                              <button
-                                onClick={() => {
-                                  setSettlementTarget(inst);
-                                  setSettleAmountDecimal(
-                                    centsToDecimalString(inst.outstandingCents)
-                                  );
-                                }}
-                                className="rounded-lg bg-[#142D43] px-3 py-1 text-[11px] font-bold text-white hover:bg-[#142D43]/90"
-                              >
-                                Registrar Baixa
-                              </button>
-                            )}
+                      ).length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={8}
+                            className="px-4 py-8 text-center text-slate-500"
+                          >
+                            Nenhum compromisso registrado nesta visão.
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : (
+                        (activeRoute === "contas-a-pagar"
+                          ? payableInstallments
+                          : receivableInstallments
+                        ).map((inst) => (
+                          <tr key={inst.id}>
+                            <td className="px-4 py-3 font-mono text-[11px] font-bold">
+                              {formatDateBR(inst.dueOn)}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="font-bold text-[#1E1B39]">
+                                {inst.obligationTitle}
+                              </div>
+                              {inst.counterparty && (
+                                <div className="text-[11px] text-slate-500">
+                                  {inst.counterparty}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 font-mono">
+                              {inst.number}/{inst.totalInstallments}
+                            </td>
+                            <td className="px-4 py-3">{inst.categoryName}</td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                                  inst.derivedStatus === "PAID"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : inst.derivedStatus === "PARTIAL"
+                                    ? "bg-[#EFEFFD] text-[#6C5CE7]"
+                                    : inst.derivedStatus === "OVERDUE"
+                                    ? "bg-rose-100 text-rose-800"
+                                    : "bg-amber-100 text-amber-900"
+                                }`}
+                              >
+                                {inst.derivedStatus}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-600">
+                              {formatBRL(inst.amountCents)}
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono font-bold tabular-nums text-[#1E1B39]">
+                              {formatBRL(inst.outstandingCents)}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              {inst.outstandingCents > 0 && (
+                                <button
+                                  onClick={() => {
+                                    setSettlementTarget(inst);
+                                    setSettleAmountDecimal(
+                                      centsToDecimalString(inst.outstandingCents)
+                                    );
+                                  }}
+                                  className="rounded-lg bg-[#6C5CE7] px-3 py-1 text-[11px] font-bold text-white hover:bg-[#5849BE]"
+                                >
+                                  Registrar Baixa
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
 
           {/* =================================================================
-              TELAS DE PLANEJAMENTO (P02): VISÃO GERAL, ORÇAMENTOS, CALENDÁRIO, CENÁRIOS, METAS
+              TELAS DE PLANEJAMENTO E FLUXO DE CAIXA (P02)
              ================================================================= */}
           {(activeRoute.startsWith("planejamento") ||
             activeRoute === "fluxo-de-caixa") && (
             <div className="space-y-6">
               {/* Sub-navegação de Planejamento */}
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs">
                 <div className="flex flex-wrap gap-1.5">
                   {[
                     {
@@ -1863,8 +2293,8 @@ export function NovaPlatformApp({
                         onClick={() => navigateRoute(tab.key)}
                         className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition ${
                           activeRoute === tab.key
-                            ? "bg-[#142D43] text-white"
-                            : "bg-[#F4F7FA] text-slate-600 hover:text-[#142D43]"
+                            ? "bg-[#6C5CE7] text-white"
+                            : "bg-[#F5F6FA] text-slate-600 hover:bg-[#EFEFFD] hover:text-[#6C5CE7]"
                         }`}
                       >
                         <Icon className="h-3.5 w-3.5" />
@@ -1895,11 +2325,11 @@ export function NovaPlatformApp({
                     type="text"
                     value={bufferInputDecimal}
                     onChange={(e) => setBufferInputDecimal(e.target.value)}
-                    className="w-28 rounded-lg border border-slate-300 px-2.5 py-1 font-mono text-xs font-bold text-[#142D43]"
+                    className="w-28 rounded-lg border border-slate-200 bg-[#F5F6FA] px-2.5 py-1 font-mono text-xs font-bold text-[#1E1B39]"
                   />
                   <button
                     type="submit"
-                    className="rounded-lg bg-[#142D43] px-3 py-1 font-bold text-white"
+                    className="rounded-lg bg-[#6C5CE7] px-3 py-1 font-bold text-white"
                   >
                     Salvar
                   </button>
@@ -1921,7 +2351,7 @@ export function NovaPlatformApp({
                         "Teto de orçamento salvo."
                       );
                     }}
-                    className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-5"
+                    className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs"
                   >
                     <div>
                       <label className="block text-xs font-bold text-slate-600">
@@ -1931,7 +2361,7 @@ export function NovaPlatformApp({
                         type="text"
                         value={budgetCat}
                         onChange={(e) => setBudgetCat(e.target.value)}
-                        className="mt-1 rounded-xl border border-slate-300 px-3 py-1.5 text-xs"
+                        className="mt-1 rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-1.5 text-xs"
                       />
                     </div>
                     <div>
@@ -1942,12 +2372,12 @@ export function NovaPlatformApp({
                         type="text"
                         value={budgetLimitDecimal}
                         onChange={(e) => setBudgetLimitDecimal(e.target.value)}
-                        className="mt-1 rounded-xl border border-slate-300 px-3 py-1.5 font-mono text-xs"
+                        className="mt-1 rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-1.5 font-mono text-xs"
                       />
                     </div>
                     <button
                       type="submit"
-                      className="rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                      className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
                     >
                       Definir Orçamento
                     </button>
@@ -1957,13 +2387,13 @@ export function NovaPlatformApp({
                     {budgets.map((b) => (
                       <div
                         key={b.id}
-                        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+                        className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-extrabold text-[#142D43]">
+                          <span className="text-sm font-extrabold text-[#1E1B39]">
                             {b.categoryName} ({b.period})
                           </span>
-                          <span className="rounded-full bg-[#F4F7FA] px-2.5 py-0.5 font-mono text-xs font-bold text-[#142D43]">
+                          <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 font-mono text-xs font-bold text-[#6C5CE7]">
                             {b.usagePct}% do teto
                           </span>
                         </div>
@@ -1994,8 +2424,8 @@ export function NovaPlatformApp({
                               b.usagePct >= 100
                                 ? "bg-rose-600"
                                 : b.usagePct >= 70
-                                ? "bg-[#F2B766]"
-                                : "bg-[#69E2C0]"
+                                ? "bg-amber-500"
+                                : "bg-[#6C5CE7]"
                             }`}
                           />
                         </div>
@@ -2012,23 +2442,23 @@ export function NovaPlatformApp({
                     <div
                       key={sc.id}
                       onClick={() => setScenarioKind(sc.kind)}
-                      className={`cursor-pointer rounded-2xl border bg-white p-5 shadow-sm ${
+                      className={`cursor-pointer rounded-2xl border bg-white p-5 shadow-xs ${
                         scenarioKind === sc.kind
-                          ? "border-2 border-[#142D43]"
-                          : "border-slate-200"
+                          ? "border-2 border-[#6C5CE7]"
+                          : "border-slate-200/80"
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="rounded-full bg-[#F4F7FA] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#142D43]">
+                        <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#6C5CE7]">
                           {sc.kind}
                         </span>
                         {scenarioKind === sc.kind && (
-                          <span className="text-xs font-bold text-emerald-700">
+                          <span className="text-xs font-bold text-[#6C5CE7]">
                             ● Ativo na Projeção
                           </span>
                         )}
                       </div>
-                      <h3 className="mt-2 text-base font-extrabold text-[#142D43]">
+                      <h3 className="mt-2 text-base font-extrabold text-[#1E1B39]">
                         {sc.name}
                       </h3>
                       <p className="mt-1 text-xs text-slate-500">{sc.notes}</p>
@@ -2060,7 +2490,7 @@ export function NovaPlatformApp({
                       );
                       setGoalName("");
                     }}
-                    className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-5 sm:grid-cols-5"
+                    className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs sm:grid-cols-5"
                   >
                     <input
                       type="text"
@@ -2068,25 +2498,25 @@ export function NovaPlatformApp({
                       placeholder="Nome da Meta"
                       value={goalName}
                       onChange={(e) => setGoalName(e.target.value)}
-                      className="rounded-xl border border-slate-300 px-3 py-2 text-xs"
+                      className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 text-xs"
                     />
                     <input
                       type="text"
                       placeholder="Valor Alvo (Ex: 15000.00)"
                       value={goalTargetDecimal}
                       onChange={(e) => setGoalTargetDecimal(e.target.value)}
-                      className="rounded-xl border border-slate-300 px-3 py-2 font-mono text-xs"
+                      className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-xs"
                     />
                     <input
                       type="date"
                       value={goalTargetOn}
                       onChange={(e) => setGoalTargetOn(e.target.value)}
-                      className="rounded-xl border border-slate-300 px-3 py-2 text-xs"
+                      className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 text-xs"
                     />
                     <select
                       value={goalReserveId}
                       onChange={(e) => setGoalReserveId(e.target.value)}
-                      className="rounded-xl border border-slate-300 px-3 py-2 text-xs"
+                      className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 text-xs"
                     >
                       <option value="">Vincular a Cofre (Opcional)</option>
                       {reserves.map((r) => (
@@ -2097,7 +2527,7 @@ export function NovaPlatformApp({
                     </select>
                     <button
                       type="submit"
-                      className="rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                      className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
                     >
                       Criar Meta
                     </button>
@@ -2107,13 +2537,13 @@ export function NovaPlatformApp({
                     {goals.map((g) => (
                       <div
                         key={g.id}
-                        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+                        className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs"
                       >
                         <div className="flex justify-between">
-                          <h4 className="font-extrabold text-[#142D43]">
+                          <h4 className="font-extrabold text-[#1E1B39]">
                             {g.name}
                           </h4>
-                          <span className="font-mono text-xs font-bold text-emerald-700">
+                          <span className="font-mono text-xs font-bold text-[#6C5CE7]">
                             {g.progressPct}%
                           </span>
                         </div>
@@ -2121,10 +2551,10 @@ export function NovaPlatformApp({
                           Cofre vinculado: {g.linkedReserveName} • Alvo:{" "}
                           {formatBRL(g.targetAmountCents)}
                         </p>
-                        <div className="mt-3 rounded-xl bg-[#F4F7FA] p-3 text-xs">
+                        <div className="mt-3 rounded-xl bg-[#F5F6FA] p-3 text-xs">
                           Contribuição mensal necessária ({g.remainingMonths}{" "}
                           meses restantes, sem assumir rentabilidade):{" "}
-                          <strong className="font-mono text-[#142D43]">
+                          <strong className="font-mono text-[#6C5CE7]">
                             {formatBRL(g.requiredMonthlyCents)}/mês
                           </strong>
                         </div>
@@ -2135,14 +2565,14 @@ export function NovaPlatformApp({
               )}
 
               {/* Série Diária de Fluxo de Caixa / Calendário Financeiro */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="text-sm font-bold text-[#142D43]">
+              <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
+                <h3 className="text-sm font-bold text-[#1E1B39]">
                   Série Diária do Fluxo de Caixa e Calendário ({horizonDays}{" "}
                   dias • Cenário {scenarioKind})
                 </h3>
                 <div className="mt-4 max-h-96 overflow-y-auto">
                   <table className="w-full text-left text-xs">
-                    <thead className="border-b border-slate-200 bg-[#F4F7FA] text-[11px] font-bold uppercase text-slate-600">
+                    <thead className="border-b border-slate-200/80 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                       <tr>
                         <th className="px-3 py-2">Data</th>
                         <th className="px-3 py-2 text-right">Saldo Inicial</th>
@@ -2182,7 +2612,7 @@ export function NovaPlatformApp({
                           <td className="px-3 py-2 text-right tabular-nums text-amber-800">
                             -{formatBRL(pt.outboundCents)}
                           </td>
-                          <td className="px-3 py-2 text-right font-bold tabular-nums text-[#142D43]">
+                          <td className="px-3 py-2 text-right font-bold tabular-nums text-[#6C5CE7]">
                             {formatBRL(pt.endingCents)}
                           </td>
                           <td className="px-3 py-2 font-sans">
@@ -2191,7 +2621,7 @@ export function NovaPlatformApp({
                                 Saldo Negativo
                               </span>
                             ) : pt.isCritical ? (
-                              <span className="rounded bg-[#F2B766]/40 px-2 py-0.5 text-[10px] font-bold text-[#142D43]">
+                              <span className="rounded bg-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-900">
                                 Abaixo da Margem
                               </span>
                             ) : (
@@ -2214,61 +2644,61 @@ export function NovaPlatformApp({
              ================================================================= */}
           {activeRoute === "reservas" && (
             <div className="space-y-6">
-              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
                 <div>
-                  <h2 className="text-lg font-extrabold text-[#142D43]">
+                  <h2 className="text-lg font-extrabold text-[#1E1B39]">
                     Reservas e Cofres Virtuais de Planejamento (P02)
                   </h2>
                   <p className="text-xs text-slate-500">
-                    Importante: valores reservados são alocações virtuais para
-                    planejamento — não saem da conta bancária nem geram receita
-                    ou despesa fictícia.
+                    Valores reservados são alocações virtuais para planejamento —
+                    não saem da conta bancária nem geram receita ou despesa
+                    fictícia.
                   </p>
                 </div>
                 <button
                   onClick={() => setShowReserveModal(true)}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
                 >
-                  <Plus className="h-4 w-4 text-[#69E2C0]" />
+                  <Plus className="h-4 w-4" />
                   Criar Cofre
                 </button>
               </div>
 
               {/* Resumo de Cobertura */}
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-4">
                   <span className="text-xs text-slate-500">
                     Saldo Bancário Elegível (S)
                   </span>
-                  <div className="mt-1 font-mono text-2xl font-extrabold text-[#142D43]">
+                  <div className="mt-1 font-mono text-2xl font-extrabold text-[#1E1B39]">
                     {formatBRL(kpis.eligibleBalanceCents)}
                   </div>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-4">
                   <span className="text-xs text-slate-500">
                     Total Alocado em Cofres (R)
                   </span>
-                  <div className="mt-1 font-mono text-2xl font-extrabold text-teal-700">
+                  <div className="mt-1 font-mono text-2xl font-extrabold text-[#6C5CE7]">
                     {formatBRL(kpis.totalAllocatedReservesCents)}
                   </div>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-4">
                   <span className="text-xs text-slate-500">
                     Saldo Livre Não Alocado (S − R)
                   </span>
                   <div
                     className={`mt-1 font-mono text-2xl font-extrabold ${
-                      kpis.freeCashCents < 0 ? "text-rose-600" : "text-[#142D43]"
+                      kpis.freeCashCents < 0 ? "text-rose-600" : "text-[#1E1B39]"
                     }`}
                   >
                     {formatBRL(kpis.freeCashCents)}
                   </div>
                 </div>
-                <div className="rounded-2xl border-2 border-[#69E2C0] bg-[#142D43] p-4 text-white">
-                  <span className="text-xs font-bold text-[#69E2C0]">
+                <div className="rounded-2xl bg-gradient-to-br from-[#6C5CE7] to-[#5849BE] p-4 text-white">
+                  <span className="text-xs font-bold text-violet-100">
                     Capacidade Adicional Segura (Headroom)
                   </span>
-                  <div className="mt-1 font-mono text-2xl font-black text-[#69E2C0]">
+                  <div className="mt-1 font-mono text-2xl font-black text-white">
                     {formatBRL(kpis.headroomCents)}
                   </div>
                 </div>
@@ -2279,21 +2709,21 @@ export function NovaPlatformApp({
                 {reserves.map((res) => (
                   <div
                     key={res.id}
-                    className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+                    className="flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs"
                   >
                     <div>
                       <div className="flex items-center justify-between">
-                        <span className="rounded-full bg-[#F4F7FA] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#142D43]">
+                        <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#6C5CE7]">
                           {res.kind}
                         </span>
-                        <span className="font-mono text-xs font-bold text-teal-700">
+                        <span className="font-mono text-xs font-bold text-[#6C5CE7]">
                           {res.progressPct}%
                         </span>
                       </div>
-                      <h3 className="mt-2 text-base font-extrabold text-[#142D43]">
+                      <h3 className="mt-2 text-base font-extrabold text-[#1E1B39]">
                         {res.name}
                       </h3>
-                      <div className="mt-3 font-mono text-2xl font-black text-[#142D43]">
+                      <div className="mt-3 font-mono text-2xl font-black text-[#1E1B39]">
                         {formatBRL(res.allocatedCents)}
                       </div>
                       {res.targetAmountCents && (
@@ -2305,7 +2735,7 @@ export function NovaPlatformApp({
                       <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-200">
                         <div
                           style={{ width: `${res.progressPct}%` }}
-                          className="h-full bg-[#69E2C0]"
+                          className="h-full bg-[#6C5CE7]"
                         />
                       </div>
                     </div>
@@ -2323,7 +2753,7 @@ export function NovaPlatformApp({
                               : "500.00"
                           );
                         }}
-                        className="flex-1 rounded-xl bg-[#142D43] py-1.5 text-xs font-bold text-white"
+                        className="flex-1 rounded-xl bg-[#6C5CE7] py-1.5 text-xs font-bold text-white"
                       >
                         Alocar (Virtual)
                       </button>
@@ -2335,7 +2765,7 @@ export function NovaPlatformApp({
                           });
                           setResMoveAmountDecimal("100.00");
                         }}
-                        className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700"
+                        className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700"
                       >
                         Liberar
                       </button>
@@ -2349,7 +2779,7 @@ export function NovaPlatformApp({
                               mode: "TRANSFER",
                             });
                           }}
-                          className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700"
+                          className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700"
                         >
                           Transferir
                         </button>
@@ -2360,8 +2790,8 @@ export function NovaPlatformApp({
               </div>
 
               {/* Explicação Auditável do Motor de Capacidade */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h4 className="text-sm font-bold text-[#142D43]">
+              <div className="rounded-2xl border border-slate-200/80 bg-white p-5">
+                <h4 className="text-sm font-bold text-[#1E1B39]">
                   Explicação Item a Item do Cálculo Conservador de Reserva
                 </h4>
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-600">
@@ -2378,18 +2808,18 @@ export function NovaPlatformApp({
              ================================================================= */}
           {activeRoute.startsWith("inteligencia") && (
             <div className="space-y-6">
-              <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h2 className="text-lg font-extrabold text-[#142D43]">
-                  Central de Alertas e Diagnóstico Mensal Explicável (P02)
+              <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
+                <h2 className="text-lg font-extrabold text-[#1E1B39]">
+                  Inteligência Financeira — Alertas e Diagnóstico (P02)
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Linguagem não alarmista, explicações rastreáveis e zero
-                  indicação nominal de produto de investimento no Pacote 02.
+                  Linguagem explicável, rastreável e integrada com fluxo de
+                  caixa, reservas e investimentos.
                 </p>
 
                 <div className="mt-4 space-y-3">
                   {alerts.length === 0 ? (
-                    <div className="rounded-xl bg-[#F4F7FA] p-6 text-center text-xs text-slate-500">
+                    <div className="rounded-xl bg-[#F5F6FA] p-6 text-center text-xs text-slate-500">
                       Nenhum alerta crítico ou pendente no horizonte atual.
                     </div>
                   ) : (
@@ -2399,18 +2829,18 @@ export function NovaPlatformApp({
                         className={`rounded-xl border p-4 ${
                           al.severity === "CRITICAL"
                             ? "border-rose-300 bg-rose-50"
-                            : "border-amber-300 bg-amber-50"
+                            : "border-violet-200 bg-[#EFEFFD]/50"
                         }`}
                       >
                         <div className="flex items-center justify-between">
-                          <span className="font-mono text-[10px] font-bold uppercase">
+                          <span className="font-mono text-[10px] font-bold uppercase text-[#6C5CE7]">
                             {al.type} • {al.severity}
                           </span>
                           <span className="text-[11px] text-slate-500">
                             {formatDateBR(al.occurrenceOn)}
                           </span>
                         </div>
-                        <h4 className="mt-1 text-sm font-bold text-[#142D43]">
+                        <h4 className="mt-1 text-sm font-bold text-[#1E1B39]">
                           {al.title}
                         </h4>
                         <p className="mt-0.5 text-xs text-slate-700">
@@ -2429,14 +2859,14 @@ export function NovaPlatformApp({
              ================================================================= */}
           {activeRoute === "relatorios" && (
             <div className="space-y-6">
-              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
                 <div>
-                  <h2 className="text-lg font-extrabold text-[#142D43]">
+                  <h2 className="text-lg font-extrabold text-[#1E1B39]">
                     Relatórios Consolidados ({activeWorkspace.name})
                   </h2>
                   <p className="text-xs text-slate-500">
                     Receitas x despesas realizadas, compromissos por vencimento
-                    e alocações de reservas
+                    e alocações de reservas e investimentos
                   </p>
                 </div>
                 <button
@@ -2451,16 +2881,17 @@ export function NovaPlatformApp({
                             },${centsToDecimalString(t.amountCents)}`
                         )
                         .join("\n");
-                    const blob = new Blob([headers], { type: "text/csv" });
+                    const blob = new Blob([headers], {
+                      type: "text/csv;charset=utf-8;",
+                    });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement("a");
                     a.href = url;
-                    a.download = `nova-relatorio-${activeWorkspace.id}.csv`;
+                    a.download = `relatorio-nova-${activeWorkspace.id}.csv`;
                     a.click();
                   }}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
                 >
-                  <Download className="h-4 w-4 text-[#69E2C0]" />
                   Exportar CSV Auditável
                 </button>
               </div>
@@ -2468,19 +2899,19 @@ export function NovaPlatformApp({
           )}
 
           {/* =================================================================
-              ADMINISTRAÇÃO, PAPÉIS RBAC E AUDITORIA
+              TELA M: ADMINISTRAÇÃO E PERMISSÕES RBAC
              ================================================================= */}
           {activeRoute === "configuracoes" && (
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h3 className="text-base font-extrabold text-[#142D43]">
-                  Controle de Acesso por Papel (RBAC no Servidor)
-                </h3>
+            <div className="space-y-6">
+              <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
+                <h2 className="text-lg font-extrabold text-[#1E1B39]">
+                  Administração, Perfis RBAC e Auditoria
+                </h2>
                 <p className="mt-1 text-xs text-slate-500">
-                  Alterne o papel ativo abaixo para testar a trava de segurança
-                  na API: o perfil <code>VIEWER</code> pode consultar dados, mas
-                  recebe <code>403 WORKSPACE_FORBIDDEN</code> ao tentar gravar.
+                  Alterne o papel ativo para testar bloqueios de autorização
+                  (ex.: VIEWER recebe HTTP 403 WORKSPACE_FORBIDDEN em mutações).
                 </p>
+
                 <div className="mt-4 flex flex-wrap gap-2">
                   {(["OWNER", "ADMIN", "EDITOR", "VIEWER"] as const).map(
                     (role) => (
@@ -2488,14 +2919,14 @@ export function NovaPlatformApp({
                         key={role}
                         onClick={() =>
                           executeAction(
-                            { action: "CHANGE_MEMBER_ROLE", role },
-                            `Papel alterado para ${role}.`
+                            { action: "SWITCH_ROLE", role },
+                            `Papel RBAC alterado para ${role}.`
                           )
                         }
                         className={`rounded-xl px-4 py-2 text-xs font-bold ${
                           currentRole === role
-                            ? "bg-[#142D43] text-[#69E2C0]"
-                            : "bg-[#F4F7FA] text-slate-700"
+                            ? "bg-[#6C5CE7] text-white"
+                            : "bg-[#F5F6FA] text-slate-700"
                         }`}
                       >
                         {role}
@@ -2505,17 +2936,17 @@ export function NovaPlatformApp({
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                <h3 className="text-base font-extrabold text-[#142D43]">
+              <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
+                <h3 className="text-base font-extrabold text-[#1E1B39]">
                   Eventos de Auditoria ({auditEvents.length})
                 </h3>
                 <div className="mt-3 max-h-80 space-y-2 overflow-y-auto text-xs">
                   {auditEvents.map((ev) => (
                     <div
                       key={ev.id}
-                      className="rounded-xl bg-[#F4F7FA] p-3 font-mono text-[11px]"
+                      className="rounded-xl bg-[#F5F6FA] p-3 font-mono text-[11px]"
                     >
-                      <div className="flex justify-between font-bold text-[#142D43]">
+                      <div className="flex justify-between font-bold text-[#6C5CE7]">
                         <span>{ev.action}</span>
                         <span>{ev.requestId}</span>
                       </div>
@@ -2530,22 +2961,81 @@ export function NovaPlatformApp({
           )}
 
           {/* =================================================================
-              PACOTE 03: INVESTIMENTOS, RENTABILIDADE E SIMULADOR PATRIMONIAL
+              PACOTE 03: CENTRAL DE INVESTIMENTOS E SIMULAÇÕES
              ================================================================= */}
-          {activeRoute === "investimentos" && (
+          {(activeRoute === "investimentos" || activeRoute === "simulacoes") && (
             <NovaInvestmentsP03View
               workspaceType={activeWorkspace.type}
               workspaceName={activeWorkspace.name}
+              activeSubTab={
+                activeRoute === "simulacoes" ? "simulador" : "visao-geral"
+              }
+              positions={investmentPositions}
+              onPositionsChange={setInvestmentPositions}
+              workspaceHeadroomCents={kpis.headroomCents}
+              workspaceReservesCents={kpis.totalAllocatedReservesCents}
+              workspaceEligibleBalanceCents={kpis.eligibleBalanceCents}
+              onNavigateWorkspaceRoute={(r) =>
+                navigateRoute(r as NovaRouteKey)
+              }
             />
           )}
         </main>
       </div>
 
       {/* =====================================================================
+          BARRA DE NAVEGAÇÃO INFERIOR MOBILE (VERSÃO CELULAR ADAPTADA)
+         ===================================================================== */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t border-slate-200 bg-white px-2 py-2 lg:hidden">
+        {[
+          {
+            key: "visao-geral" as NovaRouteKey,
+            label: "Início",
+            icon: LayoutDashboard,
+          },
+          {
+            key: "contas" as NovaRouteKey,
+            label: "Financeiro",
+            icon: Wallet,
+          },
+          {
+            key: "planejamento" as NovaRouteKey,
+            label: "Planejar",
+            icon: Compass,
+          },
+          {
+            key: "investimentos" as NovaRouteKey,
+            label: "Investir",
+            icon: Layers,
+          },
+          {
+            key: "simulacoes" as NovaRouteKey,
+            label: "Simular",
+            icon: Calculator,
+          },
+        ].map((item) => {
+          const Icon = item.icon;
+          const active = activeRoute === item.key;
+          return (
+            <button
+              key={item.key}
+              onClick={() => navigateRoute(item.key)}
+              className={`flex flex-col items-center gap-0.5 rounded-xl px-3 py-1 text-[10px] font-bold ${
+                active ? "text-[#6C5CE7]" : "text-slate-500"
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* =====================================================================
           MODAIS DE OPERAÇÃO (CONTA, LANÇAMENTO, TRANSFERÊNCIA, OBRIGAÇÃO, BAIXA, COFRE)
          ===================================================================== */}
       {showAccountModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#142D43]/60 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -2567,7 +3057,7 @@ export function NovaPlatformApp({
             }}
             className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
           >
-            <h3 className="text-base font-extrabold text-[#142D43]">
+            <h3 className="text-base font-extrabold text-[#1E1B39]">
               Cadastrar Conta ou Carteira
             </h3>
             <div className="mt-4 space-y-3 text-xs">
@@ -2579,7 +3069,7 @@ export function NovaPlatformApp({
                   placeholder="Ex: Conta Principal Itaú"
                   value={accName}
                   onChange={(e) => setAccName(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 />
               </div>
               <div>
@@ -2587,7 +3077,7 @@ export function NovaPlatformApp({
                 <select
                   value={accType}
                   onChange={(e) => setAccType(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   <option value="CHECKING">Conta Corrente (CHECKING)</option>
                   <option value="SAVINGS">Poupança / Reserva (SAVINGS)</option>
@@ -2602,7 +3092,7 @@ export function NovaPlatformApp({
                   type="text"
                   value={accOpeningDecimal}
                   onChange={(e) => setAccOpeningDecimal(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                 />
               </div>
             </div>
@@ -2610,13 +3100,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setShowAccountModal(false)}
-                className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold"
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
               >
                 Salvar Conta
               </button>
@@ -2626,7 +3116,7 @@ export function NovaPlatformApp({
       )}
 
       {showTxModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#142D43]/60 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -2651,7 +3141,7 @@ export function NovaPlatformApp({
             }}
             className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
           >
-            <h3 className="text-base font-extrabold text-[#142D43]">
+            <h3 className="text-base font-extrabold text-[#1E1B39]">
               Registrar Movimentação (P01)
             </h3>
             <div className="mt-4 space-y-3 text-xs">
@@ -2663,7 +3153,7 @@ export function NovaPlatformApp({
                     onChange={(e) =>
                       setTxKind(e.target.value as "INCOME" | "EXPENSE")
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   >
                     <option value="INCOME">
                       {isPJ ? "Recebimento (INCOME)" : "Receita (INCOME)"}
@@ -2678,7 +3168,7 @@ export function NovaPlatformApp({
                     onChange={(e) =>
                       setTxStatus(e.target.value as "SETTLED" | "PENDING")
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   >
                     <option value="SETTLED">Liquidado (Altera Saldo)</option>
                     <option value="PENDING">Pendente (Apenas Projeção)</option>
@@ -2690,7 +3180,7 @@ export function NovaPlatformApp({
                 <select
                   value={txAccountId}
                   onChange={(e) => setTxAccountId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -2706,7 +3196,7 @@ export function NovaPlatformApp({
                   required
                   value={txDescription}
                   onChange={(e) => setTxDescription(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 />
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -2717,7 +3207,7 @@ export function NovaPlatformApp({
                     required
                     value={txAmountDecimal}
                     onChange={(e) => setTxAmountDecimal(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono"
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                   />
                 </div>
                 <div>
@@ -2726,7 +3216,7 @@ export function NovaPlatformApp({
                     type="date"
                     value={txDate}
                     onChange={(e) => setTxDate(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   />
                 </div>
               </div>
@@ -2735,13 +3225,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setShowTxModal(false)}
-                className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold"
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
               >
                 Confirmar
               </button>
@@ -2751,7 +3241,7 @@ export function NovaPlatformApp({
       )}
 
       {showTransferModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#142D43]/60 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -2769,7 +3259,7 @@ export function NovaPlatformApp({
             }}
             className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
           >
-            <h3 className="text-base font-extrabold text-[#142D43]">
+            <h3 className="text-base font-extrabold text-[#1E1B39]">
               Transferência entre Contas Próprias
             </h3>
             <div className="mt-4 space-y-3 text-xs">
@@ -2778,7 +3268,7 @@ export function NovaPlatformApp({
                 <select
                   value={tfSourceId}
                   onChange={(e) => setTfSourceId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -2792,7 +3282,7 @@ export function NovaPlatformApp({
                 <select
                   value={tfDestId}
                   onChange={(e) => setTfDestId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -2807,7 +3297,7 @@ export function NovaPlatformApp({
                   type="text"
                   value={tfAmountDecimal}
                   onChange={(e) => setTfAmountDecimal(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                 />
               </div>
             </div>
@@ -2815,13 +3305,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setShowTransferModal(false)}
-                className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold"
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
               >
                 Transferir
               </button>
@@ -2831,7 +3321,7 @@ export function NovaPlatformApp({
       )}
 
       {showObligationModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#142D43]/60 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -2856,7 +3346,7 @@ export function NovaPlatformApp({
             }}
             className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
           >
-            <h3 className="text-base font-extrabold text-[#142D43]">
+            <h3 className="text-base font-extrabold text-[#1E1B39]">
               Novo Compromisso / Obrigação (P02)
             </h3>
             <div className="mt-4 space-y-3 text-xs">
@@ -2867,7 +3357,7 @@ export function NovaPlatformApp({
                   onChange={(e) =>
                     setObDirection(e.target.value as "PAYABLE" | "RECEIVABLE")
                   }
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   <option value="PAYABLE">Conta a Pagar (PAYABLE)</option>
                   <option value="RECEIVABLE">
@@ -2882,7 +3372,7 @@ export function NovaPlatformApp({
                   required
                   value={obTitle}
                   onChange={(e) => setObTitle(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 />
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -2893,7 +3383,7 @@ export function NovaPlatformApp({
                     required
                     value={obTotalDecimal}
                     onChange={(e) => setObTotalDecimal(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono"
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                   />
                 </div>
                 <div>
@@ -2904,7 +3394,7 @@ export function NovaPlatformApp({
                     max={60}
                     value={obCount}
                     onChange={(e) => setObCount(Number(e.target.value))}
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono"
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                   />
                 </div>
               </div>
@@ -2914,7 +3404,7 @@ export function NovaPlatformApp({
                   type="date"
                   value={obFirstDue}
                   onChange={(e) => setObFirstDue(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 />
               </div>
             </div>
@@ -2922,13 +3412,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setShowObligationModal(false)}
-                className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold"
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
               >
                 Gerar Parcelas
               </button>
@@ -2938,7 +3428,7 @@ export function NovaPlatformApp({
       )}
 
       {settlementTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#142D43]/60 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -2957,8 +3447,8 @@ export function NovaPlatformApp({
             }}
             className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
           >
-            <h3 className="text-base font-extrabold text-[#142D43]">
-              Registrar Baixa de Parcela (Pagamento/Recebimento Externo)
+            <h3 className="text-base font-extrabold text-[#1E1B39]">
+              Registrar Baixa de Parcela
             </h3>
             <p className="mt-1 text-xs text-slate-500">
               {settlementTarget.obligationTitle} • Saldo aberto:{" "}
@@ -2970,7 +3460,7 @@ export function NovaPlatformApp({
                 <select
                   value={settleAccountId}
                   onChange={(e) => setSettleAccountId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -2988,7 +3478,7 @@ export function NovaPlatformApp({
                   required
                   value={settleAmountDecimal}
                   onChange={(e) => setSettleAmountDecimal(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                 />
               </div>
               <div>
@@ -2997,7 +3487,7 @@ export function NovaPlatformApp({
                   type="date"
                   value={settleDate}
                   onChange={(e) => setSettleDate(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 />
               </div>
             </div>
@@ -3005,13 +3495,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setSettlementTarget(null)}
-                className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold"
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
               >
                 Confirmar Baixa
               </button>
@@ -3021,7 +3511,7 @@ export function NovaPlatformApp({
       )}
 
       {showReserveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#142D43]/60 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -3042,7 +3532,7 @@ export function NovaPlatformApp({
             }}
             className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
           >
-            <h3 className="text-base font-extrabold text-[#142D43]">
+            <h3 className="text-base font-extrabold text-[#1E1B39]">
               Criar Cofre de Reserva Virtual (P02)
             </h3>
             <div className="mt-4 space-y-3 text-xs">
@@ -3053,7 +3543,7 @@ export function NovaPlatformApp({
                   required
                   value={resName}
                   onChange={(e) => setResName(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 />
               </div>
               <div>
@@ -3061,7 +3551,7 @@ export function NovaPlatformApp({
                 <select
                   value={resKind}
                   onChange={(e) => setResKind(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   <option value="EMERGENCY">Emergência (EMERGENCY)</option>
                   <option value="WORKING_CAPITAL">
@@ -3077,7 +3567,7 @@ export function NovaPlatformApp({
                   type="text"
                   value={resTargetDecimal}
                   onChange={(e) => setResTargetDecimal(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                 />
               </div>
             </div>
@@ -3085,13 +3575,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setShowReserveModal(false)}
-                className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold"
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
               >
                 Criar Cofre
               </button>
@@ -3101,7 +3591,7 @@ export function NovaPlatformApp({
       )}
 
       {reserveActionModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#142D43]/60 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -3134,19 +3624,19 @@ export function NovaPlatformApp({
             }}
             className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
           >
-            <h3 className="text-base font-extrabold text-[#142D43]">
+            <h3 className="text-base font-extrabold text-[#1E1B39]">
               {reserveActionModal.mode === "ALLOCATE"
                 ? `Alocar em: ${reserveActionModal.reserve.name}`
                 : reserveActionModal.mode === "RELEASE"
                 ? `Liberar de: ${reserveActionModal.reserve.name}`
                 : `Transferir de: ${reserveActionModal.reserve.name}`}
             </h3>
-            <div className="mt-2 flex items-start gap-2 rounded-xl bg-[#F4F7FA] p-3 text-[11px] text-slate-600">
-              <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#142D43]" />
+            <div className="mt-2 flex items-start gap-2 rounded-xl bg-[#EFEFFD] p-3 text-[11px] text-[#1E1B39]">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#6C5CE7]" />
               <span>
-                Esta é uma operação de planejamento virtual. Não realiza
-                transferência bancária nem altera o saldo contábil das contas
-                P01. Capacidade segura sugerida (headroom):{" "}
+                Operação de planejamento virtual. Não realiza transferência
+                bancária nem altera o saldo contábil das contas P01. Capacidade
+                segura sugerida:{" "}
                 <strong>{formatBRL(kpis.headroomCents)}</strong>.
               </span>
             </div>
@@ -3157,7 +3647,7 @@ export function NovaPlatformApp({
                   <select
                     value={resMoveDestId}
                     onChange={(e) => setResMoveDestId(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   >
                     {reserves
                       .filter((r) => r.id !== reserveActionModal.reserve.id)
@@ -3176,7 +3666,7 @@ export function NovaPlatformApp({
                   required
                   value={resMoveAmountDecimal}
                   onChange={(e) => setResMoveAmountDecimal(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                 />
               </div>
             </div>
@@ -3184,13 +3674,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setReserveActionModal(null)}
-                className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold"
+                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#142D43] px-4 py-2 text-xs font-bold text-white"
+                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
               >
                 Confirmar Operação Virtual
               </button>

@@ -9,12 +9,12 @@ export default function OnboardingPage() {
   const [type, setType] = useState<"PERSONAL" | "BUSINESS">("PERSONAL");
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#F4F7FA] p-4 text-[#142D43]">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 shadow-xl">
-        <span className="rounded-full bg-[#69E2C0]/30 px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#142D43]">
+    <div className="flex min-h-screen items-center justify-center bg-[#F5F6FA] p-4 text-[#1E1B39]">
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200/80 bg-white p-8 shadow-xl">
+        <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#6C5CE7]">
           Onboarding NOVA • Pacote 01
         </span>
-        <h1 className="mt-2 text-xl font-extrabold text-[#142D43]">
+        <h1 className="mt-2 text-xl font-extrabold text-[#1E1B39]">
           Criar novo ambiente (PF ou PJ)
         </h1>
         <p className="mt-1 text-xs text-slate-500">
@@ -30,7 +30,11 @@ export default function OnboardingPage() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 action: "CREATE_WORKSPACE",
-                name: name || (type === "BUSINESS" ? "Minha Empresa PJ" : "Meu Financeiro PF"),
+                name:
+                  name ||
+                  (type === "BUSINESS"
+                    ? "Minha Empresa PJ"
+                    : "Meu Financeiro PF"),
                 type,
               }),
             });
@@ -45,13 +49,13 @@ export default function OnboardingPage() {
             <button
               type="button"
               onClick={() => setType("PERSONAL")}
-              className={`rounded-xl border p-4 text-left ${
+              className={`rounded-xl border p-4 text-left transition ${
                 type === "PERSONAL"
-                  ? "border-2 border-[#142D43] bg-[#F4F7FA]"
+                  ? "border-2 border-[#6C5CE7] bg-[#EFEFFD]/50"
                   : "border-slate-200"
               }`}
             >
-              <div className="font-extrabold text-[#142D43]">
+              <div className="font-extrabold text-[#1E1B39]">
                 Pessoa Física (PERSONAL)
               </div>
               <p className="mt-1 text-[11px] text-slate-500">
@@ -61,13 +65,13 @@ export default function OnboardingPage() {
             <button
               type="button"
               onClick={() => setType("BUSINESS")}
-              className={`rounded-xl border p-4 text-left ${
+              className={`rounded-xl border p-4 text-left transition ${
                 type === "BUSINESS"
-                  ? "border-2 border-[#142D43] bg-[#F4F7FA]"
+                  ? "border-2 border-[#6C5CE7] bg-[#EFEFFD]/50"
                   : "border-slate-200"
               }`}
             >
-              <div className="font-extrabold text-[#142D43]">
+              <div className="font-extrabold text-[#1E1B39]">
                 Empresarial (BUSINESS)
               </div>
               <p className="mt-1 text-[11px] text-slate-500">
@@ -84,13 +88,13 @@ export default function OnboardingPage() {
               placeholder="Ex: Finanças da Família / Empresa Ltda"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-3.5 py-2.5"
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3.5 py-2.5 focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
             />
           </div>
 
           <button
             type="submit"
-            className="w-full rounded-xl bg-[#142D43] py-2.5 font-bold text-white"
+            className="w-full rounded-xl bg-[#6C5CE7] py-2.5 font-bold text-white shadow-sm transition hover:bg-[#5849BE]"
           >
             Criar Workspace em R$ 0,00 e Continuar
           </button>
