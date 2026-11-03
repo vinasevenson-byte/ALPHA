@@ -14,11 +14,40 @@ import {
   remainingInstallment,
   splitInstallmentsExact,
 } from "@/domain/planning";
+import { hashToken } from "@/domain/pacote06";
+
+async function resolveActorId(req: NextRequest): Promise<string> {
+  const token = req.cookies.get("nova_session")?.value;
+  if (token) {
+    const session = await prisma.session.findUnique({
+      where: { tokenHash: hashToken(token) },
+    });
+    if (session && session.expiresAt > new Date()) {
+      return session.userId;
+    }
+  }
+  if (process.env.VERCEL_ENV === "production") {
+    throw new NovaDomainError(
+      "UNAUTHORIZED",
+      "Sessão autenticada obrigatória em produção.",
+      401
+    );
+  }
+  return "usr-nova-owner";
+}
 
 function makeRequestId(): string {
   return `req_${Date.now().toString(36)}_${Math.random()
     .toString(36)
     .slice(2, 7)}`;
+}
+
+function toJsonSafe<T>(obj: T): T {
+  return JSON.parse(
+    JSON.stringify(obj, (_key, value) =>
+      typeof value === "bigint" ? value.toString() : value
+    )
+  );
 }
 
 export async function GET(req: NextRequest) {
@@ -77,16 +106,25 @@ export async function POST(req: NextRequest) {
       req.headers.get("Idempotency-Key") ||
       body.idempotencyKey ||
       `idem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const actorId = "usr-nova-owner";
+    const actorId = await resolveActorId(req);
     const today = todayIso();
 
     // =========================================================================
     // AÇÃO ESPECIAL 1: ZERAR WORKSPACE (ESTADO INICIAL EM ZERO R$ 0,00 P01/P02/P03/P04)
+    // Restrita a OWNER/ADMIN em ambiente de homologação/desenvolvimento
     // =========================================================================
     if (action === "RESET_TO_ZERO") {
+      if (process.env.VERCEL_ENV === "production") {
+        throw new NovaDomainError(
+          "FORBIDDEN_IN_PRODUCTION",
+          "Operação RESET_TO_ZERO bloqueada em produção.",
+          403
+        );
+      }
       if (!workspaceId) {
         throw new NovaDomainError("VALIDATION_ERROR", "workspaceId obrigatório", 422);
       }
+      await authorizeWorkspaceAccess(workspaceId, actorId, "ADMIN");
       await prisma.$transaction([
         prisma.financialInsight.deleteMany({ where: { workspaceId } }),
         prisma.importedExternalTransaction.deleteMany({ where: { workspaceId } }),
@@ -560,6 +598,7 @@ export async function POST(req: NextRequest) {
           type: type || "CHECKING",
           institution: institution || null,
           openingBalanceCents: openingCents,
+          openingCents: BigInt(openingCents),
           openingBalanceDate: openingBalanceDate || today,
           status: "ACTIVE",
         },
@@ -580,7 +619,10 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      return NextResponse.json({ ok: true, account: acc, requestId }, { status: 201 });
+      return NextResponse.json(
+        toJsonSafe({ ok: true, account: acc, requestId }),
+        { status: 201 }
+      );
     }
 
     if (action === "DELETE_OR_ARCHIVE_ACCOUNT") {
@@ -607,12 +649,14 @@ export async function POST(req: NextRequest) {
             }),
           },
         });
-        return NextResponse.json({
-          ok: true,
-          archived: true,
-          account: archived,
-          requestId,
-        });
+        return NextResponse.json(
+          toJsonSafe({
+            ok: true,
+            archived: true,
+            account: archived,
+            requestId,
+          })
+        );
       }
       await prisma.account.delete({ where: { id: accountId } });
       return NextResponse.json({ ok: true, deleted: true, requestId });
@@ -628,12 +672,14 @@ export async function POST(req: NextRequest) {
         },
       });
       if (existingIdem) {
-        return NextResponse.json({
-          ok: true,
-          idempotentReplay: true,
-          transaction: existingIdem,
-          requestId,
-        });
+        return NextResponse.json(
+          toJsonSafe({
+            ok: true,
+            idempotentReplay: true,
+            transaction: existingIdem,
+            requestId,
+          })
+        );
       }
 
       const {
@@ -658,19 +704,32 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      const effectiveKind = kind || "EXPENSE";
+      const effectiveStatus = status || "SETTLED";
+      const effectiveOccurred = occurredOn || today;
+      const effectiveDue = dueOn || effectiveOccurred;
+      const signedCentsBig =
+        effectiveKind === "EXPENSE" || effectiveKind === "TRANSFER_OUT"
+          ? -BigInt(amountCents)
+          : BigInt(amountCents);
+
       const tx = await prisma.transaction.create({
         data: {
           workspaceId,
           accountId,
           categoryId: categoryId || null,
           costCenter: costCenter || null,
-          kind: kind || "EXPENSE",
-          status: status || "SETTLED",
+          kind: effectiveKind,
+          status: effectiveStatus,
           amountCents,
+          signedCents: signedCentsBig,
           signedAdjustDir: signedAdjustDir ?? 1,
-          occurredOn: occurredOn || today,
-          dueOn: dueOn || occurredOn || today,
-          settledOn: status === "SETTLED" ? occurredOn || today : null,
+          date: new Date(`${effectiveOccurred}T00:00:00Z`),
+          dueDate: new Date(`${effectiveDue}T00:00:00Z`),
+          occurredOn: effectiveOccurred,
+          dueOn: effectiveDue,
+          settledOn: effectiveStatus === "SETTLED" ? effectiveOccurred : null,
+          settledAt: effectiveStatus === "SETTLED" ? new Date() : null,
           description,
           createdBy: actorId,
           idempotencyKey,
@@ -692,7 +751,10 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      return NextResponse.json({ ok: true, transaction: tx, requestId }, { status: 201 });
+      return NextResponse.json(
+        toJsonSafe({ ok: true, transaction: tx, requestId }),
+        { status: 201 }
+      );
     }
 
     // Invariante P01 #3: Transferência interna em duas pernas atômicas
@@ -724,6 +786,7 @@ export async function POST(req: NextRequest) {
 
       const transferGroupId = `tfg_${Date.now()}`;
       const dateStr = occurredOn || today;
+      const dtObj = new Date(`${dateStr}T00:00:00Z`);
 
       const [outLeg, inLeg] = await prisma.$transaction([
         prisma.transaction.create({
@@ -733,9 +796,14 @@ export async function POST(req: NextRequest) {
             kind: "TRANSFER_OUT",
             status: "SETTLED",
             amountCents,
+            signedCents: -BigInt(amountCents),
+            date: dtObj,
+            dueDate: dtObj,
             occurredOn: dateStr,
             settledOn: dateStr,
+            settledAt: new Date(),
             description: description || "Transferência entre contas próprias",
+            transferGroup: transferGroupId,
             transferGroupId,
             createdBy: actorId,
             idempotencyKey: `${idempotencyKey}_out`,
@@ -748,9 +816,14 @@ export async function POST(req: NextRequest) {
             kind: "TRANSFER_IN",
             status: "SETTLED",
             amountCents,
+            signedCents: BigInt(amountCents),
+            date: dtObj,
+            dueDate: dtObj,
             occurredOn: dateStr,
             settledOn: dateStr,
+            settledAt: new Date(),
             description: description || "Transferência entre contas próprias",
+            transferGroup: transferGroupId,
             transferGroupId,
             createdBy: actorId,
             idempotencyKey: `${idempotencyKey}_in`,
@@ -774,7 +847,7 @@ export async function POST(req: NextRequest) {
       ]);
 
       return NextResponse.json(
-        { ok: true, transferGroupId, outLeg, inLeg, requestId },
+        toJsonSafe({ ok: true, transferGroupId, outLeg, inLeg, requestId }),
         { status: 201 }
       );
     }
@@ -789,12 +862,14 @@ export async function POST(req: NextRequest) {
       }
       if (existing.status === "SETTLED") {
         // Idempotente: não duplica saldo
-        return NextResponse.json({
-          ok: true,
-          idempotentReplay: true,
-          transaction: existing,
-          requestId,
-        });
+        return NextResponse.json(
+          toJsonSafe({
+            ok: true,
+            idempotentReplay: true,
+            transaction: existing,
+            requestId,
+          })
+        );
       }
 
       const updated = await prisma.transaction.update({
@@ -802,6 +877,7 @@ export async function POST(req: NextRequest) {
         data: {
           status: "SETTLED",
           settledOn: settledOn || today,
+          settledAt: new Date(),
           version: { increment: 1 },
         },
       });
@@ -820,7 +896,9 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      return NextResponse.json({ ok: true, transaction: updated, requestId });
+      return NextResponse.json(
+        toJsonSafe({ ok: true, transaction: updated, requestId })
+      );
     }
 
     // Invariante P01 #6: Cancelamento preserva histórico com motivo e auditoria (não apaga registro)
@@ -857,7 +935,9 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      return NextResponse.json({ ok: true, transaction: canceled, requestId });
+      return NextResponse.json(
+        toJsonSafe({ ok: true, transaction: canceled, requestId })
+      );
     }
 
     // =========================================================================

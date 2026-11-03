@@ -1,36 +1,37 @@
-# NOVA — Inteligência Financeira (Pacote 01 & Pacote 02)
+# NOVA — Plataforma de Inteligência Financeira (v8.0.0 | Pacotes 01 a 08)
 
 > *"Seu dinheiro organizado. Seu futuro planejado."*
 
-Implementação completa e integrada das especificações **[NOVA_Pacote_01_Especificacao.md](file:///D:/PROJETOS%20VS%20CODE/ALPHA/docs/specs/NOVA_Pacote_01_Especificacao.md)** (Fundação e Operação Financeira) e **[NOVA_Pacote_02](file:///D:/PROJETOS%20VS%20CODE/ALPHA/docs/specs/pacote_02/NOVA_Pacote_02/README.md)** (Planejamento Financeiro Inteligente) para **Pessoas Físicas (`PERSONAL`)** e **Empresas (`BUSINESS`)**.
+Consolidação operacional integrada dos **Pacotes 01 a 08** da plataforma **NOVA** para **Pessoas Físicas (`PERSONAL`)** e **Empresas (`BUSINESS`)**:
+- **[Pacote 01](file:///D:/PROJETOS%20VS%20CODE/ALPHA/docs/specs/NOVA_Pacote_01_Especificacao.md)**: Fundação Financeira, Contas, Movimentações, Transferências Atômicas e Auditoria.
+- **[Pacote 02](file:///D:/PROJETOS%20VS%20CODE/ALPHA/docs/specs/pacote_02/NOVA_Pacote_02/README.md)**: Planejamento Financeiro, Contas a Pagar/Receber, Parcelas, Cofres Virtuais e Capacidade Conservadora de Reserva (`headroom`).
+- **[Pacote 03](file:///D:/PROJETOS%20VS%20CODE/ALPHA/docs/specs/pacote_03/NOVA_Pacote_03/README.md)**: Carteira de Investimentos, Liquidez D+0/Carência, Tributação Regressiva Renda Fixa e Comparador.
+- **[Pacote 04](file:///D:/PROJETOS%20VS%20CODE/ALPHA/docs/specs/pacote_04/NOVA_Pacote_04/README.md)**: Inteligência Financeira, Índice de Saúde Ponderado, Assistente IA Somente Leitura e Conciliação CSV/Open Finance.
+- **[Pacote 05](file:///D:/PROJETOS%20VS%20CODE/ALPHA/docs/specs/pacote_05/NOVA_Pacote_05_Consolidacao_v5.0.0/README.md)**: Núcleo Financeiro Canônico `BigInt` em centavos exatos e Conciliação Declarada.
+- **[Pacote 06](file:///D:/PROJETOS%20VS%20CODE/ALPHA/docs/specs/pacote_06/NOVA_Pacote_06_Operacional_v6.0.0/README.md)**: Operação Persistente com Prisma, Autenticação (`scrypt` + salt + sessões `HttpOnly SameSite=Strict`), Isolamento PF/PJ, RBAC (`OWNER`, `ADMIN`, `EDITOR`, `VIEWER`), Proteção de `Origin` e Idempotência Transacional (`Serializable`).
+- **[Pacote 07](file:///D:/PROJETOS%20VS%20CODE/ALPHA/docs/specs/pacote_07/NOVA_Pacote_07_Vercel_v7.0.0/README.md)**: Adaptação serverless (`api/index.mjs`, `apps/api/src/local.mjs`) e guia [VERCEL-DEPLOY.md](file:///D:/PROJETOS%20VS%20CODE/ALPHA/docs/VERCEL-DEPLOY.md).
+- **[Pacote 08](file:///D:/PROJETOS%20VS%20CODE/ALPHA/docs/specs/pacote_08/NOVA_Pacote_08_ALPHA_Vercel_Seguranca_v8.0.0/README.md)**: Endurecimento para Vercel Preview no repositório `ALPHA` ([IMPLEMENTACAO.md](file:///D:/PROJETOS%20VS%20CODE/ALPHA/docs/IMPLEMENTACAO.md), [middleware.ts](file:///D:/PROJETOS%20VS%20CODE/ALPHA/middleware.ts), [vercel.json](file:///D:/PROJETOS%20VS%20CODE/ALPHA/vercel.json), [preflight.mjs](file:///D:/PROJETOS%20VS%20CODE/ALPHA/tools/preflight.mjs), [prepare-postgres.mjs](file:///D:/PROJETOS%20VS%20CODE/ALPHA/tools/prepare-postgres.mjs), remoção de `.env` do controle de versão e migração de schema para PostgreSQL).
 
-## 1. Identidade Visual NOVA (WCAG 2.2 AA)
-- **Azul Profundo (`#142D43`)**: Marca, navegação lateral e cabeçalhos principais.
-- **Verde Menta (`#69E2C0`)**: Destaques de capacidade de reserva, confirmações e progresso.
-- **Cinza Claro (`#F4F7FA`)**: Superfície principal limpa e sofisticada.
-- **Âmbar (`#F2B766`)**: Indicadores de atenção, compromissos próximos e margens.
-- **Tipografia Numérica**: Alinhamento `tabular-nums`, moeda `BRL` (`R$`) e datas no padrão brasileiro (`dd/mm/aaaa`).
+## 1. Verificações e Homologação (Pacote 08)
 
-## 2. Invariantes Financeiras Implementadas e Testadas (P01 + P02)
-1. **Estado Inicial Zerado (`R$ 0,00`)**: Novos workspaces começam sem dados fictícios (*"Aguardando lançamentos"*). Um botão de homologação na barra superior permite alternar instantaneamente entre o estado `R$ 0,00` e a fixture canônica de testes do Pacote 02.
-2. **Fórmula de Saldo por Conta (P01)**:
-   $$\text{Saldo Atual} = \text{Saldo Inicial} + \text{Receitas Liquidadas} - \text{Despesas Liquidadas} + \text{Transferências Recebidas} - \text{Transferências Enviadas} \pm \text{Ajustes}$$
-3. **Transferências Internas Atômicas (P01)**: Geram duas pernas (`TRANSFER_OUT` e `TRANSFER_IN`) na mesma transação de banco de dados, preservando o saldo consolidado do workspace e sem inflar receitas ou despesas.
-4. **Obrigações, Parcelas e Baixas Parciais/Integrais (P02)**: Divisão exata em centavos (`splitInstallmentsExact`), impedimento de baixa acima do saldo aberto (`409 OVER_SETTLEMENT`) e vínculo atômico entre `NovaSettlement` e `Transaction` P01 com `Idempotency-Key`.
-5. **Motor Conservador de Capacidade de Reserva (`headroom` — P02)**:
-   $$\text{headroom} = \max(0, \min(S, P_{\min}) - B - R - U)$$
-   Reproduz com exatidão o caso canônico: Saldo atual $S = \text{R\$ } 10.000,00$, Menor saldo projetado $P_{\min} = \text{R\$ } 7.000,00$, Margem de segurança $B = \text{R\$ } 2.000,00$, Reservas alocadas $R = \text{R\$ } 1.000,00 \implies \text{Capacidade adicional para reservar} = \text{R\$ } 4.000,00$.
-6. **Cofres Virtuais de Planejamento (P02)**: Movimentos `ALLOCATE`, `RELEASE` e `TRANSFER_IN`/`TRANSFER_OUT` operam em um livro virtual de planejamento sem criar transações bancárias fictícias.
+```powershell
+# 1. Validar schema PostgreSQL e rodar verificações pré-implantação P08
+npx.cmd prisma validate
+npm.cmd run preflight:p08
 
-## 3. Como Executar e Testar
-
-```bash
-# Executar suíte de testes unitários e de integração (Vitest)
+# 2. Executar suíte completa de testes (67 testes Vitest P01-P08 + 14 testes Node Domain & E2E Integration P06/P07)
 npm.cmd test
 
-# Iniciar servidor de desenvolvimento
-npm.cmd run dev
-
-# Build de produção
+# 3. Executar build completo para Vercel (Prisma Generate + Next.js 15 Build)
 npm.cmd run build
 ```
+
+## 2. Configuração na Vercel (Branch `homologacao/p08-vercel`)
+- **Framework Preset**: `Next.js`
+- **Root Directory**: `./`
+- **Install Command**: `npm ci`
+- **Build Command**: `npm run build` (`prisma generate && next build`)
+- **Variáveis de Ambiente (Preview)**:
+  - `DATABASE_URL`: conexão PostgreSQL exclusiva de homologação (`?sslmode=require`)
+  - `NOVA_PREVIEW_USER`: usuário do gate de Preview
+  - `NOVA_PREVIEW_PASSWORD`: senha aleatória de 32+ caracteres para o gate de Preview

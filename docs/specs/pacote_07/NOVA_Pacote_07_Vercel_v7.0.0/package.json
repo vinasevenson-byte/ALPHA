@@ -1,0 +1,24 @@
+{
+  "name": "nova-vercel-v7",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file=.env apps/api/src/local.mjs",
+    "test": "node --test apps/api/test/*.test.mjs",
+    "db:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema apps/api/prisma/schema.prisma",
+    "db:deploy": "prisma migrate deploy --schema apps/api/prisma/schema.prisma",
+    "db:studio": "prisma studio --schema apps/api/prisma/schema.prisma",
+    "start": "node --env-file=.env apps/api/src/local.mjs",
+    "postinstall": "prisma generate --schema apps/api/prisma/schema.prisma",
+    "vercel-build": "prisma generate --schema apps/api/prisma/schema.prisma",
+    "db:diff": "prisma migrate diff --from-empty --to-schema-datamodel apps/api/prisma/schema.prisma --script"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.11.0",
+    "prisma": "^6.11.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

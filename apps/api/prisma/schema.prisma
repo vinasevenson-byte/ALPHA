@@ -1,0 +1,548 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  passwordHash String
+  name         String
+  status       String       @default("ACTIVE")
+  createdAt    DateTime     @default(now())
+  memberships  Membership[]
+  sessions     Session[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Workspace {
+  id                      String                            @id @default(uuid())
+  type                    String                            // "PERSONAL" | "BUSINESS"
+  name                    String
+  ownerId                 String                            @default("usr-nova-owner")
+  baseCurrency            String                            @default("BRL")
+  timezone                String                            @default("America/Sao_Paulo")
+  safetyBufferCents       Int                               @default(0) // Começa em R$ 0,00 conforme P01/P02
+  reconciled              Boolean                           @default(false) // Conciliação declarada / conferida (P05/P06)
+  version                 Int                               @default(1)
+  createdAt               DateTime                          @default(now())
+  updatedAt               DateTime                          @default(now()) @updatedAt
+  memberships             Membership[]
+  accounts                Account[]
+  categories              Category[]
+  counterparties          Counterparty[]
+  transactions            Transaction[]
+  recurrences             Recurrence[]
+  budgets                 Budget[]
+  obligations             NovaObligation[]
+  installments            NovaInstallment[]
+  settlements             NovaSettlement[]
+  reserves                NovaReserve[]
+  reserveMovements        NovaReserveMovement[]
+  goals                   NovaGoal[]
+  scenarios               NovaPlanningScenario[]
+  alerts                  NovaAlert[]
+  auditEvents             AuditEvent[]
+  investmentPositions     NovaInvestmentPosition[]
+  financialConnections    FinancialConnection[]
+  importBatches           ImportBatch[]
+  importedTransactions    ImportedExternalTransaction[]
+  financialInsights       FinancialInsight[]
+  notificationPreferences FinancialNotificationPreference[]
+  consentAudits           FinancialConsentAudit[]
+  p06Reserves             Reserve[]
+  p06Investments          Investment[]
+  p06Audits               Audit[]
+  requests                IdempotencyKey[]
+}
+
+model Membership {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        String    @default("OWNER") // "OWNER" | "ADMIN" | "EDITOR" | "VIEWER"
+  status      String    @default("ACTIVE")
+  createdAt   DateTime  @default(now())
+
+  @@unique([workspaceId, userId])
+  @@unique([userId, workspaceId])
+}
+
+model Account {
+  id                  String        @id @default(uuid())
+  workspaceId         String
+  workspace           Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name                String
+  type                String        @default("CHECKING") // "CHECKING" | "SAVINGS" | "CASH" | "OTHER"
+  institution         String?
+  currency            String        @default("BRL")
+  openingBalanceCents Int           @default(0)
+  openingCents        BigInt        @default(0)
+  openingBalanceDate  String        @default("2026-01-01") // YYYY-MM-DD
+  status              String        @default("ACTIVE") // "ACTIVE" | "ARCHIVED"
+  createdAt           DateTime      @default(now())
+  transactions        Transaction[]
+
+  @@index([workspaceId])
+}
+
+model Category {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type        String    // "INCOME" | "EXPENSE"
+  name        String
+  isEssential Boolean   @default(true)
+  parentId    String?
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model Counterparty {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type        String    @default("COMPANY") // "PERSON" | "COMPANY"
+  name        String
+  document    String?
+  costCenter  String?
+  createdAt   DateTime  @default(now())
+}
+
+model Transaction {
+  id              String    @id @default(uuid())
+  workspaceId     String
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  accountId       String
+  account         Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  categoryId      String?
+  counterpartyId  String?
+  costCenter      String?
+  kind            String    // "INCOME" | "EXPENSE" | "TRANSFER_IN" | "TRANSFER_OUT" | "OPENING_BALANCE" | "ADJUSTMENT"
+  status          String    // "PENDING" | "SETTLED" | "CANCELED"
+  amountCents     Int       @default(0) // Positivo em P01-P05
+  signedCents     BigInt    @default(0) // Assinado em BigInt no P06
+  signedAdjustDir Int       @default(1) // Para ADJUSTMENT: +1 ou -1
+  date            DateTime  @default(now())
+  dueDate         DateTime  @default(now())
+  occurredOn      String    @default("2026-01-01") // YYYY-MM-DD
+  dueOn           String?   // YYYY-MM-DD
+  settledOn       String?   // YYYY-MM-DD
+  settledAt       DateTime?
+  description     String
+  cancelReason    String?
+  transferGroup   String?
+  transferGroupId String?
+  createdBy       String    @default("system")
+  version         Int       @default(1)
+  idempotencyKey  String    @default(uuid())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, occurredOn])
+  @@index([workspaceId, status, dueOn])
+  @@index([workspaceId, status, dueDate])
+  @@index([workspaceId, accountId, settledOn])
+  @@index([accountId, status])
+  @@index([transferGroup])
+}
+
+// ============================================================================
+// PACOTE 06: RESERVAS, INVESTIMENTOS MANUAIS, AUDITORIA E IDEMPOTÊNCIA (BIGINT)
+// ============================================================================
+model Reserve {
+  id          String    @id @default(uuid())
+  workspaceId String
+  name        String
+  amountCents BigInt
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model Investment {
+  id          String    @id @default(uuid())
+  workspaceId String
+  name        String
+  amountCents BigInt
+  asOf        DateTime
+  source      String    @default("MANUAL")
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model Audit {
+  id          String    @id @default(uuid())
+  workspaceId String
+  actorId     String
+  action      String
+  entityId    String?
+  metadata    Json?
+  at          DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, at])
+}
+
+model IdempotencyKey {
+  id           String    @id @default(uuid())
+  workspaceId  String
+  key          String
+  operation    String
+  payloadHash  String
+  responseJson Json
+  createdAt    DateTime  @default(now())
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, key])
+}
+
+// ============================================================================
+// PACOTES 01–05: PLANEJAMENTO, PARCELAS, RESERVAS AVANÇADAS, INVESTIMENTOS E IA
+// ============================================================================
+model Recurrence {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  accountId   String
+  categoryId  String?
+  kind        String    // "INCOME" | "EXPENSE"
+  title       String
+  amountCents Int
+  periodicity String    @default("MONTHLY") // "WEEKLY" | "MONTHLY" | "YEARLY"
+  nextDate    String    // YYYY-MM-DD
+  endDate     String?
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+}
+
+model Budget {
+  id               String    @id @default(uuid())
+  workspaceId      String
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  categoryId       String?
+  categoryName     String
+  costCenter       String?
+  period           String    // YYYY-MM
+  limitCents       Int
+  warnOnly         Boolean   @default(true)
+  carryOver        Boolean   @default(false)
+  thresholdWarnPct Int       @default(70)
+  thresholdCritPct Int       @default(90)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([workspaceId, period])
+}
+
+model NovaObligation {
+  id             String            @id @default(uuid())
+  workspaceId    String
+  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  direction      String            // "PAYABLE" | "RECEIVABLE"
+  title          String
+  categoryId     String?
+  categoryName   String?
+  counterpartyId String?
+  counterparty   String?
+  costCenter     String?
+  status         String            @default("ACTIVE") // "DRAFT" | "ACTIVE" | "CANCELED"
+  cancelReason   String?
+  confidence     String            @default("HIGH")   // "HIGH" | "MEDIUM"
+  version        Int               @default(1)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  installments   NovaInstallment[]
+
+  @@index([workspaceId, direction, status])
+}
+
+model NovaInstallment {
+  id                  String           @id @default(uuid())
+  workspaceId         String
+  workspace           Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  obligationId        String
+  obligation          NovaObligation   @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+  number              Int
+  dueOn               String           // YYYY-MM-DD
+  amountCents         Int
+  status              String           @default("OPEN") // "OPEN" | "PARTIAL" | "PAID" | "CANCELED"
+  sourceTransactionId String?          @unique
+  settlements         NovaSettlement[]
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@unique([obligationId, number])
+  @@index([workspaceId, dueOn, status])
+}
+
+model NovaSettlement {
+  id             String          @id @default(uuid())
+  workspaceId    String
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  installmentId  String
+  installment    NovaInstallment @relation(fields: [installmentId], references: [id], onDelete: Cascade)
+  transactionId  String          @unique
+  accountId      String
+  amountCents    Int
+  settledOn      String          // YYYY-MM-DD
+  note           String?
+  idempotencyKey String
+  createdAt      DateTime        @default(now())
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, installmentId])
+}
+
+model NovaReserve {
+  id                String                @id @default(uuid())
+  workspaceId       String
+  workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name              String
+  kind              String                @default("GENERAL") // "EMERGENCY" | "TRAVEL" | "TAX" | "WORKING_CAPITAL" | "EDUCATION" | "GENERAL"
+  status            String                @default("ACTIVE")  // "ACTIVE" | "PAUSED" | "COMPLETED" | "ARCHIVED"
+  targetAmountCents Int?
+  targetOn          String?               // YYYY-MM-DD
+  priority          Int                   @default(3)
+  version           Int                   @default(1)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  movements         NovaReserveMovement[]
+  goals             NovaGoal[]
+
+  @@index([workspaceId, status])
+}
+
+model NovaReserveMovement {
+  id              String      @id @default(uuid())
+  workspaceId     String
+  workspace       Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  reserveId       String
+  reserve         NovaReserve @relation(fields: [reserveId], references: [id], onDelete: Cascade)
+  kind            String      // "ALLOCATE" | "RELEASE" | "TRANSFER_IN" | "TRANSFER_OUT"
+  amountCents     Int
+  transferGroupId String?
+  idempotencyKey  String
+  actorId         String
+  reason          String?
+  createdAt       DateTime    @default(now())
+
+  @@unique([workspaceId, idempotencyKey, kind])
+  @@index([workspaceId, reserveId, createdAt])
+}
+
+model NovaGoal {
+  id                String       @id @default(uuid())
+  workspaceId       String
+  workspace         Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  reserveId         String?
+  reserve           NovaReserve? @relation(fields: [reserveId], references: [id])
+  name              String
+  targetAmountCents Int
+  targetOn          String?      // YYYY-MM-DD
+  priority          Int          @default(3)
+  status            String       @default("ACTIVE") // "ACTIVE" | "PAUSED" | "ACHIEVED" | "ARCHIVED"
+  version           Int          @default(1)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([workspaceId, status])
+}
+
+model NovaPlanningScenario {
+  id                       String    @id @default(uuid())
+  workspaceId              String
+  workspace                Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name                     String
+  kind                     String    // "BASE" | "CONSERVATIVE" | "OPTIMISTIC"
+  contingencyBufferPct     Int       @default(0)
+  hypotheticalInflowCents  Int       @default(0)
+  hypotheticalOutflowCents Int       @default(0)
+  notes                    String?
+  createdBy                String
+  version                  Int       @default(1)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  @@index([workspaceId, kind])
+}
+
+model NovaAlert {
+  id           String    @id @default(uuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type         String
+  severity     String    // "INFO" | "WARNING" | "CRITICAL"
+  title        String
+  message      String
+  fingerprint  String
+  sourceRef    String?
+  state        String    @default("NEW") // "NEW" | "READ" | "DISMISSED" | "RESOLVED"
+  occurrenceOn String    // YYYY-MM-DD
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([workspaceId, fingerprint])
+  @@index([workspaceId, state, occurrenceOn])
+}
+
+model AuditEvent {
+  id           String    @id @default(uuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actorId      String
+  action       String
+  entityType   String
+  entityId     String
+  requestId    String
+  metadataJson String
+  timestamp    DateTime  @default(now())
+
+  @@index([workspaceId, timestamp])
+}
+
+model NovaInvestmentPosition {
+  id                    String    @id @default(uuid())
+  workspaceId           String
+  workspace             Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  symbol                String
+  name                  String
+  kind                  String    // "TESOURO_SELIC" | "CDB" | "LCI" | "LCA" | "TESOURO_IPCA" | "TESOURO_PREFIXADO" | "FUND" | "ETF"
+  institution           String
+  indexer               String    @default("CDI")
+  rateLabel             String
+  costBasisCents        Int
+  currentGrossCents     Int
+  daysHeld              Int       @default(365)
+  redemptionAvailableAt String    // YYYY-MM-DD
+  maturityDate          String    // YYYY-MM-DD
+  fgcEligible           Boolean   @default(false)
+  quoteStatus           String    @default("VALID") // "VALID" | "STALE"
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([workspaceId, kind])
+}
+
+model FinancialConnection {
+  id               String    @id @default(uuid())
+  workspaceId      String
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  providerCode     String
+  institutionName  String
+  status           String    @default("DISCONNECTED") // "DISCONNECTED" | "PENDING_CONSENT" | "ACTIVE" | "SYNCING" | "EXPIRED" | "REVOKED" | "ERROR"
+  consentId        String?
+  consentScopes    String?
+  consentExpiresAt DateTime?
+  lastSyncAt       DateTime?
+  lastErrorCode    String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([workspaceId, providerCode, id])
+  @@index([workspaceId, status])
+}
+
+model ImportBatch {
+  id            String    @id @default(uuid())
+  workspaceId   String
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connectionId  String?
+  sourceType    String    // "CSV" | "OFX"
+  fileName      String    @default("extrato.csv")
+  state         String    @default("REVIEWING") // "UPLOADED" | "VALIDATED" | "REVIEWING" | "COMMITTED" | "REJECTED"
+  inputChecksum String
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  committedAt   DateTime?
+
+  @@index([workspaceId, state, createdAt])
+}
+
+model ImportedExternalTransaction {
+  id                   String    @id @default(uuid())
+  workspaceId          String
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  providerId           String
+  accountExternalId    String
+  externalId           String
+  postedOn             String    // YYYY-MM-DD
+  amountCents          Int
+  direction            String    // "CREDIT" | "DEBIT" | "SELF_TRANSFER"
+  description          String
+  rawHash              String
+  importBatchId        String
+  state                String    @default("STAGED") // "STAGED" | "MATCHED" | "IMPORTED" | "IGNORED"
+  matchedLedgerEntryId String?
+  createdAt            DateTime  @default(now())
+
+  @@unique([workspaceId, providerId, accountExternalId, externalId])
+  @@index([workspaceId, importBatchId])
+}
+
+model FinancialInsight {
+  id            String    @id @default(uuid())
+  workspaceId   String
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  code          String
+  severity      String    // "HIGH" | "MEDIUM" | "LOW"
+  state         String    @default("NEW") // "NEW" | "READ" | "DISMISSED" | "COMPLETED"
+  title         String
+  explanation   String
+  evidenceJson  String
+  asOf          DateTime  @default(now())
+  sourceVersion String    @default("4.0.0")
+  dedupeKey     String
+  createdAt     DateTime  @default(now())
+
+  @@unique([workspaceId, dedupeKey])
+  @@index([workspaceId, state, createdAt])
+}
+
+model FinancialNotificationPreference {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  channel     String    // "IN_APP" | "EMAIL"
+  eventType   String
+  enabled     Boolean   @default(false)
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([workspaceId, userId, channel, eventType])
+}
+
+model FinancialConsentAudit {
+  id           String    @id @default(uuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connectionId String
+  actorId      String
+  action       String    // "GRANTED" | "SCOPE_CHANGED" | "EXPIRED" | "REVOKED"
+  scopesJson   String
+  eventAt      DateTime  @default(now())
+  requestId    String
+
+  @@index([workspaceId, connectionId, eventAt])
+}

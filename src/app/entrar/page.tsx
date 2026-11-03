@@ -7,7 +7,33 @@ import { useRouter } from "next/navigation";
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("titular@nova.fin.br");
-  const [password, setPassword] = useState("••••••••••••");
+  const [password, setPassword] = useState("Nova@Segura#2026");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Falha ao autenticar.");
+        return;
+      }
+      const targetWs = data.workspaces?.[0]?.id || "ws-nova-pf";
+      router.push(`/app/${targetWs}/visao-geral`);
+    } catch {
+      setError("Erro de comunicação com o servidor.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#F5F6FA] p-4 text-[#1E1B39]">
@@ -25,15 +51,9 @@ export default function LoginPage() {
         </div>
 
         <h2 className="mt-6 text-base font-bold text-[#1E1B39]">
-          Entrar na sua conta
+          Entrar na sua conta (Pacote 06 · Sessão Segura)
         </h2>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            router.push("/app/ws-nova-pf/visao-geral");
-          }}
-          className="mt-4 space-y-4 text-xs"
-        >
+        <form onSubmit={handleLogin} className="mt-4 space-y-4 text-xs">
           <div>
             <label className="font-bold text-slate-700">E-mail</label>
             <input
@@ -45,7 +65,9 @@ export default function LoginPage() {
             />
           </div>
           <div>
-            <label className="font-bold text-slate-700">Senha</label>
+            <label className="font-bold text-slate-700">
+              Senha (mín. 12 caracteres)
+            </label>
             <input
               type="password"
               required
@@ -54,11 +76,20 @@ export default function LoginPage() {
               className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3.5 py-2.5 focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
             />
           </div>
+          {error && (
+            <div
+              role="alert"
+              className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700"
+            >
+              {error}
+            </div>
+          )}
           <button
             type="submit"
-            className="w-full rounded-xl bg-[#6C5CE7] py-2.5 font-bold text-white shadow-sm transition hover:bg-[#5849BE]"
+            disabled={loading}
+            className="w-full rounded-xl bg-[#6C5CE7] py-2.5 font-bold text-white shadow-sm transition hover:bg-[#5849BE] disabled:opacity-50"
           >
-            Acessar Painel NOVA
+            {loading ? "Autenticando..." : "Acessar Painel NOVA"}
           </button>
         </form>
 
@@ -67,7 +98,7 @@ export default function LoginPage() {
             href="/cadastro"
             className="font-semibold text-[#6C5CE7] hover:underline"
           >
-            Criar nova conta
+            Criar nova conta (PF + PJ)
           </Link>
           <Link href="/onboarding" className="hover:underline">
             Configurar novo Workspace PF/PJ

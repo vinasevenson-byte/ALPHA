@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -15,19 +15,32 @@ model User {
   status       String       @default("ACTIVE")
   createdAt    DateTime     @default(now())
   memberships  Membership[]
+  sessions     Session[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Workspace {
   id                      String                            @id @default(uuid())
   type                    String                            // "PERSONAL" | "BUSINESS"
   name                    String
+  ownerId                 String                            @default("usr-nova-owner")
   baseCurrency            String                            @default("BRL")
   timezone                String                            @default("America/Sao_Paulo")
   safetyBufferCents       Int                               @default(0) // Começa em R$ 0,00 conforme P01/P02
-  reconciled              Boolean                           @default(false) // Conciliação declarada / conferida (P05)
+  reconciled              Boolean                           @default(false) // Conciliação declarada / conferida (P05/P06)
   version                 Int                               @default(1)
   createdAt               DateTime                          @default(now())
-  updatedAt               DateTime                          @updatedAt
+  updatedAt               DateTime                          @default(now()) @updatedAt
   memberships             Membership[]
   accounts                Account[]
   categories              Category[]
@@ -51,6 +64,10 @@ model Workspace {
   financialInsights       FinancialInsight[]
   notificationPreferences FinancialNotificationPreference[]
   consentAudits           FinancialConsentAudit[]
+  p06Reserves             Reserve[]
+  p06Investments          Investment[]
+  p06Audits               Audit[]
+  requests                IdempotencyKey[]
 }
 
 model Membership {
@@ -64,6 +81,7 @@ model Membership {
   createdAt   DateTime  @default(now())
 
   @@unique([workspaceId, userId])
+  @@unique([userId, workspaceId])
 }
 
 model Account {
@@ -75,10 +93,13 @@ model Account {
   institution         String?
   currency            String        @default("BRL")
   openingBalanceCents Int           @default(0)
-  openingBalanceDate  String        // YYYY-MM-DD
+  openingCents        BigInt        @default(0)
+  openingBalanceDate  String        @default("2026-01-01") // YYYY-MM-DD
   status              String        @default("ACTIVE") // "ACTIVE" | "ARCHIVED"
   createdAt           DateTime      @default(now())
   transactions        Transaction[]
+
+  @@index([workspaceId])
 }
 
 model Category {
@@ -115,26 +136,90 @@ model Transaction {
   costCenter      String?
   kind            String    // "INCOME" | "EXPENSE" | "TRANSFER_IN" | "TRANSFER_OUT" | "OPENING_BALANCE" | "ADJUSTMENT"
   status          String    // "PENDING" | "SETTLED" | "CANCELED"
-  amountCents     Int       // Sempre positivo (> 0)
+  amountCents     Int       @default(0) // Positivo em P01-P05
+  signedCents     BigInt    @default(0) // Assinado em BigInt no P06
   signedAdjustDir Int       @default(1) // Para ADJUSTMENT: +1 ou -1
-  occurredOn      String    // YYYY-MM-DD
+  date            DateTime  @default(now())
+  dueDate         DateTime  @default(now())
+  occurredOn      String    @default("2026-01-01") // YYYY-MM-DD
   dueOn           String?   // YYYY-MM-DD
   settledOn       String?   // YYYY-MM-DD
+  settledAt       DateTime?
   description     String
   cancelReason    String?
+  transferGroup   String?
   transferGroupId String?
-  createdBy       String
+  createdBy       String    @default("system")
   version         Int       @default(1)
-  idempotencyKey  String
+  idempotencyKey  String    @default(uuid())
   createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  updatedAt       DateTime  @default(now()) @updatedAt
 
   @@unique([workspaceId, idempotencyKey])
   @@index([workspaceId, occurredOn])
   @@index([workspaceId, status, dueOn])
+  @@index([workspaceId, status, dueDate])
   @@index([workspaceId, accountId, settledOn])
+  @@index([accountId, status])
+  @@index([transferGroup])
 }
 
+// ============================================================================
+// PACOTE 06: RESERVAS, INVESTIMENTOS MANUAIS, AUDITORIA E IDEMPOTÊNCIA (BIGINT)
+// ============================================================================
+model Reserve {
+  id          String    @id @default(uuid())
+  workspaceId String
+  name        String
+  amountCents BigInt
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model Investment {
+  id          String    @id @default(uuid())
+  workspaceId String
+  name        String
+  amountCents BigInt
+  asOf        DateTime
+  source      String    @default("MANUAL")
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model Audit {
+  id          String    @id @default(uuid())
+  workspaceId String
+  actorId     String
+  action      String
+  entityId    String?
+  metadata    Json?
+  at          DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, at])
+}
+
+model IdempotencyKey {
+  id           String    @id @default(uuid())
+  workspaceId  String
+  key          String
+  operation    String
+  payloadHash  String
+  responseJson Json
+  createdAt    DateTime  @default(now())
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, key])
+}
+
+// ============================================================================
+// PACOTES 01–05: PLANEJAMENTO, PARCELAS, RESERVAS AVANÇADAS, INVESTIMENTOS E IA
+// ============================================================================
 model Recurrence {
   id          String    @id @default(uuid())
   workspaceId String
@@ -337,9 +422,6 @@ model AuditEvent {
   @@index([workspaceId, timestamp])
 }
 
-// ============================================================================
-// PACOTE 03: POSIÇÕES DE INVESTIMENTO PERSISTIDAS POR WORKSPACE
-// ============================================================================
 model NovaInvestmentPosition {
   id                    String    @id @default(uuid())
   workspaceId           String
@@ -363,9 +445,6 @@ model NovaInvestmentPosition {
   @@index([workspaceId, kind])
 }
 
-// ============================================================================
-// PACOTE 04: INTELIGÊNCIA FINANCEIRA, CONEXÕES E IMPORTAÇÃO CONCILIÁVEL
-// ============================================================================
 model FinancialConnection {
   id               String    @id @default(uuid())
   workspaceId      String

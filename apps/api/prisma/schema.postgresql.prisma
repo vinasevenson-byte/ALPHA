@@ -1,0 +1,118 @@
+generator client { provider = "prisma-client-js" }
+datasource db { provider = "postgresql" url = env("DATABASE_URL") }
+enum WorkspaceType { PERSONAL BUSINESS }
+enum Role { OWNER ADMIN EDITOR VIEWER }
+enum PostingKind { INCOME EXPENSE TRANSFER_OUT TRANSFER_IN }
+enum PostingStatus { PENDING SETTLED }
+model User {
+  id String @id @default(uuid())
+  email String @unique
+  name String
+  passwordHash String
+  createdAt DateTime @default(now())
+  memberships Membership[]
+  sessions Session[]
+}
+model Session {
+  id String @id @default(uuid())
+  userId String
+  tokenHash String @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+}
+model Workspace {
+  id String @id @default(uuid())
+  name String
+  type WorkspaceType
+  ownerId String
+  reconciled Boolean @default(false)
+  createdAt DateTime @default(now())
+  members Membership[]
+  accounts Account[]
+  transactions Transaction[]
+  reserves Reserve[]
+  investments Investment[]
+  audits Audit[]
+  requests IdempotencyKey[]
+}
+model Membership {
+  id String @id @default(uuid())
+  userId String
+  workspaceId String
+  role Role
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Cascade)
+  @@unique([userId,workspaceId])
+}
+model Account {
+  id String @id @default(uuid())
+  workspaceId String
+  name String
+  openingCents BigInt @default(0)
+  createdAt DateTime @default(now())
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict)
+  postings Transaction[]
+  @@index([workspaceId])
+}
+model Transaction {
+  id String @id @default(uuid())
+  workspaceId String
+  accountId String
+  kind PostingKind
+  status PostingStatus
+  signedCents BigInt
+  date DateTime @db.Date
+  dueDate DateTime @db.Date
+  description String
+  transferGroup String?
+  settledAt DateTime?
+  createdAt DateTime @default(now())
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict)
+  account Account @relation(fields:[accountId],references:[id],onDelete:Restrict)
+  @@index([workspaceId,status,dueDate])
+  @@index([accountId,status])
+  @@index([transferGroup])
+}
+model Reserve {
+  id String @id @default(uuid())
+  workspaceId String
+  name String
+  amountCents BigInt
+  createdAt DateTime @default(now())
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict)
+  @@index([workspaceId])
+}
+model Investment {
+  id String @id @default(uuid())
+  workspaceId String
+  name String
+  amountCents BigInt
+  asOf DateTime @db.Date
+  source String @default("MANUAL")
+  createdAt DateTime @default(now())
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict)
+  @@index([workspaceId])
+}
+model Audit {
+  id String @id @default(uuid())
+  workspaceId String
+  actorId String
+  action String
+  entityId String?
+  metadata Json?
+  at DateTime @default(now())
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict)
+  @@index([workspaceId,at])
+}
+model IdempotencyKey {
+  id String @id @default(uuid())
+  workspaceId String
+  key String
+  operation String
+  payloadHash String
+  responseJson Json
+  createdAt DateTime @default(now())
+  workspace Workspace @relation(fields:[workspaceId],references:[id],onDelete:Restrict)
+  @@unique([workspaceId,key])
+}

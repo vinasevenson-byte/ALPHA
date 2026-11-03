@@ -27,6 +27,7 @@ import {
   projection as canonicalProjection,
   capacity as canonicalCapacity,
 } from "@/domain/canonical-core";
+import { compute as computeP06, makePassword } from "@/domain/pacote06";
 
 export interface ApiErrorShape {
   code: string;
@@ -83,7 +84,7 @@ export async function ensureBaseWorkspaces() {
     data: {
       id: "usr-nova-owner",
       email: "titular@nova.fin.br",
-      passwordHash: "$argon2id$v=19$m=65536,t=3,p=4$nova_hash_protegido",
+      passwordHash: makePassword("Nova@Segura#2026"),
       name: "Vinícius (Titular)",
       status: "ACTIVE",
     },
@@ -335,6 +336,11 @@ export async function getWorkspaceFullState(params: {
     importedTransactions,
     storedInsights,
     consentAudits,
+    p06ReservesRaw,
+    p06InvestmentsRaw,
+    p06AuditCount,
+    idempotencyKeyCount,
+    activeSessionCount,
   ] = await Promise.all([
     prisma.membership.findMany({
       where: { workspaceId: wsId },
@@ -425,20 +431,73 @@ export async function getWorkspaceFullState(params: {
       orderBy: { eventAt: "desc" },
       take: 30,
     }),
+    prisma.reserve.findMany({
+      where: { workspaceId: wsId },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.investment.findMany({
+      where: { workspaceId: wsId },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.audit.count({ where: { workspaceId: wsId } }),
+    prisma.idempotencyKey.count({ where: { workspaceId: wsId } }),
+    prisma.session.count({ where: { expiresAt: { gt: new Date() } } }),
   ]);
 
   const today = todayIso();
 
+  // Normaliza transações para interoperabilidade P01–P05 + P06 (serializando BigInt)
+  const normalizedTransactions = transactions.map((t) => {
+    const derivedAmountCents =
+      t.amountCents > 0 ? t.amountCents : Math.abs(Number(t.signedCents));
+    const derivedSignedBig =
+      t.signedCents !== 0n
+        ? t.signedCents
+        : t.kind === "EXPENSE" || t.kind === "TRANSFER_OUT"
+          ? -BigInt(derivedAmountCents)
+          : BigInt(derivedAmountCents);
+    const isoDate =
+      t.occurredOn && t.occurredOn !== "2026-01-01"
+        ? t.occurredOn
+        : t.date instanceof Date
+          ? t.date.toISOString().slice(0, 10)
+          : today;
+    const isoDue =
+      t.dueOn ||
+      (t.dueDate instanceof Date
+        ? t.dueDate.toISOString().slice(0, 10)
+        : isoDate);
+    return {
+      ...t,
+      amountCents: derivedAmountCents,
+      signedCents: derivedSignedBig.toString(),
+      occurredOn: isoDate,
+      dueOn: isoDue,
+      account: t.account
+        ? {
+            ...t.account,
+            openingCents: t.account.openingCents.toString(),
+          }
+        : t.account,
+    };
+  });
+
   // 1. Saldos por conta usando Invariante P01 #2
   const computedAccounts = accounts.map((acc) => {
-    const accTxs = transactions.filter((t) => t.accountId === acc.id);
+    const accTxs = normalizedTransactions.filter((t) => t.accountId === acc.id);
+    const effectiveOpeningCents =
+      acc.openingBalanceCents !== 0
+        ? acc.openingBalanceCents
+        : Number(acc.openingCents);
     const currentBalanceCents = computeAccountBalanceCents(
-      acc.openingBalanceCents,
+      effectiveOpeningCents,
       accTxs
     );
     const settledCount = accTxs.filter((t) => t.status === "SETTLED").length;
     return {
       ...acc,
+      openingBalanceCents: effectiveOpeningCents,
+      openingCents: BigInt(effectiveOpeningCents).toString(),
       currentBalanceCents,
       currentBalanceDecimal: centsToDecimalString(currentBalanceCents),
       canDelete: settledCount === 0,
@@ -452,7 +511,7 @@ export async function getWorkspaceFullState(params: {
     .reduce((sum, a) => sum + a.currentBalanceCents, 0);
 
   // 2. Totais consolidados de Receitas e Despesas (excluindo transferências internas)
-  const consolidatedTotals = computeConsolidatedTotals(transactions);
+  const consolidatedTotals = computeConsolidatedTotals(normalizedTransactions);
 
   // 3. Processamento das Obrigações e Parcelas P02 (Contas a Pagar e a Receber)
   const enrichedInstallments: Array<{
@@ -537,7 +596,7 @@ export async function getWorkspaceFullState(params: {
       .map((i) => i.sourceTransactionId)
       .filter(Boolean)
   );
-  const standalonePendingTxs = transactions.filter(
+  const standalonePendingTxs = normalizedTransactions.filter(
     (t) =>
       t.status === "PENDING" &&
       !linkedTxIds.has(t.id) &&
@@ -716,7 +775,7 @@ export async function getWorkspaceFullState(params: {
 
   // 7. Orçamentos (Budgets P01/P02) sem dupla contagem
   const computedBudgets = budgets.map((b) => {
-    const realizedCents = transactions
+    const realizedCents = normalizedTransactions
       .filter(
         (t) =>
           t.status === "SETTLED" &&
@@ -984,15 +1043,15 @@ export async function getWorkspaceFullState(params: {
     )
     .reduce((s, i) => s + i.outstandingCents, 0);
 
-  // Núcleo Financeiro Canônico P05 (BigInt exato e conciliação declarada)
-  const p05Accounts = accounts.map((a) => ({
+  // Núcleo Financeiro Canônico P05 + P06 (BigInt exato e conciliação declarada)
+  const p05Accounts = computedAccounts.map((a) => ({
     id: a.id,
     workspaceId: a.workspaceId,
     name: a.name,
     openingCents: BigInt(a.openingBalanceCents),
   }));
   const p05Txs = [
-    ...transactions.map((t) => ({
+    ...normalizedTransactions.map((t) => ({
       id: t.id,
       workspaceId: t.workspaceId,
       accountId: t.accountId,
@@ -1049,6 +1108,25 @@ export async function getWorkspaceFullState(params: {
     isWorkspaceReconciled
   );
 
+  const p06ReservesCombined = [
+    ...p06ReservesRaw.map((r) => ({
+      id: r.id,
+      name: r.name,
+      amountCents: r.amountCents.toString(),
+    })),
+    ...computedReserves.map((r) => ({
+      id: r.id,
+      name: r.name,
+      amountCents: BigInt(r.allocatedCents).toString(),
+    })),
+  ];
+  const p06Computed = computeP06(
+    p05Accounts,
+    p05Txs,
+    p06ReservesCombined,
+    isWorkspaceReconciled
+  );
+
   return {
     workspaces,
     activeWorkspace,
@@ -1056,7 +1134,7 @@ export async function getWorkspaceFullState(params: {
     accounts: computedAccounts,
     categories,
     counterparties,
-    transactions,
+    transactions: normalizedTransactions,
     recurrences,
     budgets: computedBudgets,
     obligations,
@@ -1079,6 +1157,23 @@ export async function getWorkspaceFullState(params: {
       summary: p05SummaryResult,
       projection: p05ProjectionResult,
       capacity: p05CapacityResult,
+    },
+    p06Operational: {
+      version: "6.0.0",
+      reconciled: isWorkspaceReconciled,
+      ...p06Computed,
+      reserves: p06ReservesRaw.map((r) => ({
+        ...r,
+        amountCents: r.amountCents.toString(),
+      })),
+      investments: p06InvestmentsRaw.map((i) => ({
+        ...i,
+        amountCents: i.amountCents.toString(),
+        asOf: i.asOf.toISOString().slice(0, 10),
+      })),
+      auditCount: p06AuditCount + auditEvents.length,
+      idempotencyKeyCount,
+      activeSessionCount,
     },
     kpis: {
       eligibleBalanceCents,
