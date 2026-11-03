@@ -1,14 +1,16 @@
 {
   "name": "nova-plataforma-financeira",
-  "version": "2.0.0",
+  "version": "5.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:preview": "node apps/dev-server/server.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:p05-node": "node --test apps/dev-server/test/domain.test.mjs",
     "db:push": "prisma db push"
   },
   "dependencies": {

@@ -24,6 +24,7 @@ model Workspace {
   baseCurrency            String                            @default("BRL")
   timezone                String                            @default("America/Sao_Paulo")
   safetyBufferCents       Int                               @default(0) // Começa em R$ 0,00 conforme P01/P02
+  reconciled              Boolean                           @default(false) // Conciliação declarada / conferida (P05)
   version                 Int                               @default(1)
   createdAt               DateTime                          @default(now())
   updatedAt               DateTime                          @updatedAt

@@ -296,6 +296,17 @@ interface NovaStatePayload {
       externalMarketDataEnabled: boolean;
     };
   };
+  p05Canonical?: {
+    version: string;
+    reconciled: boolean;
+    summary: { balance: string; income: string; expense: string };
+    projection: {
+      minimum: string;
+      closing: string;
+      points: Array<{ date: string; balance: string }>;
+    };
+    capacity: string | null;
+  };
   alerts: AlertItem[];
   auditEvents: AuditEventItem[];
   kpis: {
@@ -1188,7 +1199,7 @@ export function NovaPlatformApp({
                     NOVA
                   </span>
                   <span className="rounded-full bg-[#EFEFFD] px-2 py-0.5 text-[10px] font-bold text-[#6C5CE7]">
-                    v4.0
+                    v5.0
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-500">
@@ -3049,6 +3060,7 @@ export function NovaPlatformApp({
               importBatches={state.importBatches ?? []}
               importedTransactions={state.importedTransactions ?? []}
               consentAudits={state.consentAudits ?? []}
+              p05Canonical={state.p05Canonical}
               onExecuteAction={executeAction}
               onNavigateRoute={(r) => navigateRoute(r as NovaRouteKey)}
             />

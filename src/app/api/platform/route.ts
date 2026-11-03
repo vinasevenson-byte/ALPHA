@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
         prisma.account.deleteMany({ where: { workspaceId } }),
         prisma.workspace.update({
           where: { id: workspaceId },
-          data: { safetyBufferCents: 0, version: { increment: 1 } },
+          data: { safetyBufferCents: 0, reconciled: false, version: { increment: 1 } },
         }),
         prisma.auditEvent.create({
           data: {
@@ -164,6 +164,7 @@ export async function POST(req: NextRequest) {
           where: { id: workspaceId },
           data: {
             safetyBufferCents: 200000, // R$ 2.000,00 de margem de segurança
+            reconciled: true, // Conciliação declarada (P05)
             version: { increment: 1 },
           },
         });
@@ -1768,12 +1769,35 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "ACKNOWLEDGE_INSIGHT") {
-      const { insightId, newState = "READ" } = body;
+      const { insightId, newState = "READ", status } = body;
       await prisma.financialInsight.updateMany({
         where: { id: insightId, workspaceId },
-        data: { state: newState },
+        data: { state: status || newState },
       });
       return NextResponse.json({ ok: true, requestId });
+    }
+
+    if (action === "SET_WORKSPACE_RECONCILED") {
+      const { reconciled } = body;
+      const ws = await prisma.workspace.update({
+        where: { id: workspaceId },
+        data: {
+          reconciled: Boolean(reconciled),
+          version: { increment: 1 },
+        },
+      });
+      await prisma.auditEvent.create({
+        data: {
+          workspaceId,
+          actorId,
+          action: "workspace.reconciled_toggled",
+          entityType: "Workspace",
+          entityId: workspaceId,
+          requestId,
+          metadataJson: JSON.stringify({ reconciled: ws.reconciled }),
+        },
+      });
+      return NextResponse.json({ ok: true, reconciled: ws.reconciled, requestId });
     }
 
     throw new NovaDomainError("VALIDATION_ERROR", `Ação inválida: ${action}`, 400);

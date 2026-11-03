@@ -149,6 +149,17 @@ interface Props {
   importBatches: ImportBatchItem[];
   importedTransactions: ImportedTransactionItem[];
   consentAudits: ConsentAuditItem[];
+  p05Canonical?: {
+    version: string;
+    reconciled: boolean;
+    summary: { balance: string; income: string; expense: string };
+    projection: {
+      minimum: string;
+      closing: string;
+      points: Array<{ date: string; balance: string }>;
+    };
+    capacity: string | null;
+  };
   onExecuteAction: (
     payload: Record<string, unknown>,
     successMsg?: string
@@ -216,6 +227,7 @@ export function NovaIntelligenceP04View({
   importBatches,
   importedTransactions,
   consentAudits,
+  p05Canonical,
   onExecuteAction,
   onNavigateRoute,
 }: Props) {
@@ -546,8 +558,86 @@ export function NovaIntelligenceP04View({
                 )}
               </div>
 
-              {/* Painel de Insights Explicáveis Persistidos */}
-              <div className="rounded-2xl border border-[#E4E7EF] bg-white p-6 shadow-sm lg:col-span-5">
+              {/* Painel de Insights Explicáveis Persistidos e Conciliação Declarada P05 */}
+              <div className="space-y-6 lg:col-span-5">
+                {p05Canonical && (
+                  <div className="rounded-2xl border border-[#E4E7EF] bg-white p-6 shadow-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="rounded-full bg-[#EFE9FF] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#6D28D9]">
+                        Consolidação Operacional • Pacote 05 (v5.0.0)
+                      </span>
+                      <span
+                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                          p05Canonical.reconciled
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-amber-100 text-amber-800"
+                        }`}
+                      >
+                        {p05Canonical.reconciled
+                          ? "CONCILIADO"
+                          : "CONCILIAÇÃO PENDENTE"}
+                      </span>
+                    </div>
+                    <h3 className="mt-2 text-base font-extrabold text-[#141726]">
+                      Conciliação Declarada &amp; Núcleo Canônico (BigInt)
+                    </h3>
+                    <p className="mt-1 text-xs text-[#5B6275]">
+                      Ao confirmar, você declara que cadastrou todos os
+                      compromissos conhecidos. A capacidade de reserva canônica
+                      permanece bloqueada até a conciliação ser confirmada.
+                    </p>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2.5 rounded-xl bg-[#F5F6FA] p-3 text-xs">
+                      <div>
+                        <span className="text-[10px] font-semibold text-slate-500">
+                          Saldo Realizado (Canônico)
+                        </span>
+                        <div className="font-mono text-sm font-bold text-[#141726]">
+                          R$ {p05Canonical.summary.balance}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-semibold text-slate-500">
+                          Menor Saldo Projetado
+                        </span>
+                        <div className="font-mono text-sm font-bold text-[#141726]">
+                          R$ {p05Canonical.projection.minimum}
+                        </div>
+                      </div>
+                      <div className="col-span-2 border-t border-slate-200/70 pt-2">
+                        <span className="text-[10px] font-semibold text-slate-500">
+                          Capacidade de Reserva (Gated por Conciliação P05)
+                        </span>
+                        <div className="font-mono text-sm font-extrabold text-[#6D28D9]">
+                          {p05Canonical.capacity === null
+                            ? "Indisponível (Requer Conciliação Declarada)"
+                            : `R$ ${p05Canonical.capacity}`}
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() =>
+                        onExecuteAction(
+                          {
+                            action: "SET_WORKSPACE_RECONCILED",
+                            reconciled: !p05Canonical.reconciled,
+                          },
+                          p05Canonical.reconciled
+                            ? "Conciliação declarada desmarcada."
+                            : "Dados conferidos: conciliação declarada confirmada."
+                        )
+                      }
+                      className="mt-4 w-full rounded-xl bg-[#6D28D9] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#5B21B6]"
+                    >
+                      {p05Canonical.reconciled
+                        ? "Desmarcar conciliação"
+                        : "Confirmar dados conferidos"}
+                    </button>
+                  </div>
+                )}
+
+                <div className="rounded-2xl border border-[#E4E7EF] bg-white p-6 shadow-sm">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                   <div>
                     <h3 className="text-base font-extrabold text-[#141726]">
@@ -661,6 +751,7 @@ export function NovaIntelligenceP04View({
                       );
                     })
                   )}
+                </div>
                 </div>
               </div>
             </div>

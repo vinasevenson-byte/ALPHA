@@ -22,6 +22,11 @@ import {
   projectLiquidity,
   taxableFixedIncomeRedemption,
 } from "@/domain/investments";
+import {
+  summary as canonicalSummary,
+  projection as canonicalProjection,
+  capacity as canonicalCapacity,
+} from "@/domain/canonical-core";
 
 export interface ApiErrorShape {
   code: string;
@@ -979,6 +984,71 @@ export async function getWorkspaceFullState(params: {
     )
     .reduce((s, i) => s + i.outstandingCents, 0);
 
+  // Núcleo Financeiro Canônico P05 (BigInt exato e conciliação declarada)
+  const p05Accounts = accounts.map((a) => ({
+    id: a.id,
+    workspaceId: a.workspaceId,
+    name: a.name,
+    openingCents: BigInt(a.openingBalanceCents),
+  }));
+  const p05Txs = [
+    ...transactions.map((t) => ({
+      id: t.id,
+      workspaceId: t.workspaceId,
+      accountId: t.accountId,
+      kind: t.kind,
+      status: t.status,
+      signedCents:
+        t.kind === "EXPENSE" || t.kind === "TRANSFER_OUT"
+          ? -BigInt(t.amountCents)
+          : BigInt(t.amountCents),
+      date: t.occurredOn,
+      dueDate: t.dueOn || t.occurredOn,
+      description: t.description,
+    })),
+    ...enrichedInstallments
+      .filter(
+        (i) =>
+          i.derivedStatus !== "PAID" &&
+          i.derivedStatus !== "CANCELED" &&
+          p05Accounts.length > 0
+      )
+      .map((i) => ({
+        id: i.id,
+        workspaceId: activeWorkspace.id,
+        accountId: p05Accounts[0].id,
+        kind: i.direction === "PAYABLE" ? "EXPENSE" : "INCOME",
+        status: "PENDING",
+        signedCents:
+          i.direction === "PAYABLE"
+            ? -BigInt(i.outstandingCents)
+            : BigInt(i.outstandingCents),
+        date: i.dueOn,
+        dueDate: i.dueOn,
+        description: i.obligationTitle,
+      })),
+  ];
+
+  const p05SummaryResult = canonicalSummary(
+    p05Accounts,
+    p05Txs,
+    activeWorkspace.id
+  );
+  const p05ProjectionResult = canonicalProjection(
+    p05Accounts,
+    p05Txs,
+    activeWorkspace.id
+  );
+  const isWorkspaceReconciled = Boolean(
+    (activeWorkspace as { reconciled?: boolean }).reconciled
+  );
+  const p05CapacityResult = canonicalCapacity(
+    BigInt(minForecastBalanceCents),
+    BigInt(activeWorkspace.safetyBufferCents),
+    BigInt(totalAllocatedReservesCents),
+    isWorkspaceReconciled
+  );
+
   return {
     workspaces,
     activeWorkspace,
@@ -1003,6 +1073,13 @@ export async function getWorkspaceFullState(params: {
     importedTransactions,
     financialInsights: storedInsights,
     consentAudits,
+    p05Canonical: {
+      version: "5.0.0",
+      reconciled: isWorkspaceReconciled,
+      summary: p05SummaryResult,
+      projection: p05ProjectionResult,
+      capacity: p05CapacityResult,
+    },
     kpis: {
       eligibleBalanceCents,
       eligibleBalanceDecimal: centsToDecimalString(eligibleBalanceCents),
