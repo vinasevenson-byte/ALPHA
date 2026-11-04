@@ -605,7 +605,38 @@ export function NovaPlatformApp({
     );
   }
 
-  if (!state) return null;
+  if (!state) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F5F6FA] p-6 text-[#1E1B39]">
+        <div className="w-full max-w-md rounded-2xl border border-[#E5E7EB] bg-white p-8 shadow-sm">
+          <div className="mb-3 inline-flex rounded-full bg-[#EFEFFD] px-3 py-1 text-xs font-semibold text-[#6C5CE7]">
+            NOVA — Homologação Protegida (v9.0.0)
+          </div>
+          <h1 className="text-xl font-bold text-[#1E1B39]">
+            Autenticação de Sessão ou Banco Necessária
+          </h1>
+          <p className="mt-2 text-sm text-[#4B5563]">
+            {bannerError ||
+              "Para visualizar um workspace financeiro, autentique sua sessão ou verifique a conexão DATABASE_URL na Vercel."}
+          </p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <a
+              href="/entrar"
+              className="rounded-xl bg-[#6C5CE7] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#5B4BC4]"
+            >
+              Ir para Login (/entrar)
+            </a>
+            <a
+              href="/cadastro"
+              className="rounded-xl border border-[#D1D5DB] bg-white px-4 py-2.5 text-sm font-semibold text-[#1E1B39] hover:bg-[#F9FAFB]"
+            >
+              Criar Conta (/cadastro)
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const {
     workspaces,

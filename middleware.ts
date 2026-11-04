@@ -1,43 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 /**
- * NOVA P08/P09 – Middleware de segurança e cabeçalhos de proteção.
- * No Pacote 09 (v9.0.0), a autenticação real por sessão (scrypt + NovaSession) e RBAC
- * estão ativos nas rotas /entrar, /cadastro, /api/auth/* e /api/platform.
- * O bloqueio Basic Auth legado do Pacote 08 só é ativado se NOVA_LEGACY_P08_GATE === 'true'.
+ * NOVA: temporary protected inspection deployment.
+ * NOT a replacement for user authentication, workspace authorization, or production hardening.
+ * Basic access remains compulsory on BOTH Preview and Production.
  */
 export function middleware(request: NextRequest) {
-  if (process.env.NOVA_LEGACY_P08_GATE === 'true') {
-    const username = process.env.NOVA_PREVIEW_USER;
-    const password = process.env.NOVA_PREVIEW_PASSWORD;
-    const production = process.env.VERCEL_ENV === 'production';
+  const username = process.env.NOVA_PREVIEW_USER;
+  const password = process.env.NOVA_PREVIEW_PASSWORD;
 
-    if (production || !username || !password || password.length < 20) {
-      return new NextResponse('NOVA indisponível: ambiente não homologado.', { status: 503 });
-    }
+  // Fail closed when Vercel env variables were not provisioned.
+  if (!username || !password || password.length < 20) {
+    return new NextResponse('NOVA: configure NOVA_PREVIEW_USER e NOVA_PREVIEW_PASSWORD na Vercel.', {
+      status: 503,
+      headers: { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' },
+    });
+  }
 
-    const auth = request.headers.get('authorization');
-    let valid = false;
-    if (auth?.startsWith('Basic ')) {
-      try {
-        const decoded = atob(auth.slice(6));
-        const delimiter = decoded.indexOf(':');
-        const receivedUser = decoded.slice(0, delimiter);
-        const receivedPassword = decoded.slice(delimiter + 1);
-        valid = delimiter > 0 && receivedUser === username && receivedPassword === password;
-      } catch { /* malformed credentials */ }
-    }
-    if (!valid) {
-      return new NextResponse('Autenticação necessária para homologação NOVA.', {
-        status: 401,
-        headers: { 'WWW-Authenticate': 'Basic realm="NOVA Preview"', 'Cache-Control': 'no-store' },
-      });
-    }
+  const authorization = request.headers.get('authorization');
+  let authorized = false;
+  if (authorization?.startsWith('Basic ')) {
+    try {
+      const decoded = atob(authorization.slice('Basic '.length));
+      const colon = decoded.indexOf(':');
+      authorized = colon > 0 &&
+        decoded.slice(0, colon) === username &&
+        decoded.slice(colon + 1) === password;
+    } catch { authorized = false; }
+  }
 
-    const pathname = request.nextUrl.pathname;
-    if ((pathname.startsWith('/api/') || pathname.startsWith('/v1/')) && !['GET','HEAD','OPTIONS'].includes(request.method)) {
-      return NextResponse.json({ code: 'PREVIEW_READ_ONLY', message: 'Operações de gravação desativadas até a autenticação definitiva e autorização por workspace.' }, { status: 403 });
-    }
+  if (!authorized) {
+    return new NextResponse('NOVA: acesso restrito para homologacao.', {
+      status: 401,
+      headers: {
+        'WWW-Authenticate': 'Basic realm="NOVA Homologacao", charset="UTF-8"',
+        'Cache-Control': 'no-store',
+        'X-Robots-Tag': 'noindex, nofollow',
+      },
+    });
+  }
+
+  const pathname = request.nextUrl.pathname;
+  // Temporary VIEW-ONLY mode. Never release financial writes until backend RBAC/DB are validated.
+  if ((pathname.startsWith('/api/') || pathname.startsWith('/v1/')) &&
+      !['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+    return NextResponse.json({
+      code: 'READ_ONLY_HOMOLOGATION',
+      message: 'Gravacoes temporariamente bloqueadas durante homologacao.'
+    }, { status: 403, headers: { 'Cache-Control': 'no-store' } });
   }
 
   const response = NextResponse.next();
@@ -46,4 +56,6 @@ export function middleware(request: NextRequest) {
   return response;
 }
 
-export const config = { matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'] };
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+};
