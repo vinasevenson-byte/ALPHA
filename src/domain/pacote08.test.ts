@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { middleware } from "../../middleware";
 
 describe("NOVA Pacote 08 — Middleware de Proteção Preview e Bloqueio de Escrita", () => {
   const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env.NOVA_LEGACY_P08_GATE = "true";
+  });
 
   afterEach(() => {
     process.env = { ...originalEnv };
