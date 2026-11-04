@@ -76,150 +76,12 @@ export function addDaysIso(baseIso: string, days: number): string {
  * Garante que o usuário padrão e os dois workspaces (Pessoal PF e Empresarial PJ)
  * existam, começando em ESTADO ZERO (R$ 0,00 - Aguardando lançamentos) conforme P01/P02/P03/P04.
  */
-export async function ensureBaseWorkspaces() {
-  const existingUsers = await prisma.user.count();
-  if (existingUsers > 0) return;
-
-  const user = await prisma.user.create({
-    data: {
-      id: "usr-nova-owner",
-      email: "titular@nova.fin.br",
-      passwordHash: makePassword("Nova@Segura#2026"),
-      name: "Vinícius (Titular)",
-      status: "ACTIVE",
-    },
-  });
-
-  const wsPF = await prisma.workspace.create({
-    data: {
-      id: "ws-nova-pf",
-      type: "PERSONAL",
-      name: "Meu Financeiro Pessoal",
-      baseCurrency: "BRL",
-      timezone: "America/Sao_Paulo",
-      safetyBufferCents: 0,
-      version: 1,
-    },
-  });
-
-  const wsPJ = await prisma.workspace.create({
-    data: {
-      id: "ws-nova-pj",
-      type: "BUSINESS",
-      name: "NOVA Empresa Ltda",
-      baseCurrency: "BRL",
-      timezone: "America/Sao_Paulo",
-      safetyBufferCents: 0,
-      version: 1,
-    },
-  });
-
-  await prisma.membership.createMany({
-    data: [
-      {
-        workspaceId: wsPF.id,
-        userId: user.id,
-        role: "OWNER",
-        status: "ACTIVE",
-      },
-      {
-        workspaceId: wsPJ.id,
-        userId: user.id,
-        role: "OWNER",
-        status: "ACTIVE",
-      },
-    ],
-  });
-
-  // Categorias base (sem lançamentos nem saldos fictícios)
-  await prisma.category.createMany({
-    data: [
-      { workspaceId: wsPF.id, type: "INCOME", name: "Salário", isEssential: true },
-      { workspaceId: wsPF.id, type: "INCOME", name: "Renda Extra", isEssential: false },
-      { workspaceId: wsPF.id, type: "EXPENSE", name: "Moradia", isEssential: true },
-      { workspaceId: wsPF.id, type: "EXPENSE", name: "Alimentação", isEssential: true },
-      { workspaceId: wsPF.id, type: "EXPENSE", name: "Saúde", isEssential: true },
-      { workspaceId: wsPF.id, type: "EXPENSE", name: "Transporte", isEssential: true },
-      { workspaceId: wsPF.id, type: "EXPENSE", name: "Estilo de Vida", isEssential: false },
-
-      { workspaceId: wsPJ.id, type: "INCOME", name: "Recebimento de Clientes", isEssential: true },
-      { workspaceId: wsPJ.id, type: "INCOME", name: "Contratos Recorrentes", isEssential: true },
-      { workspaceId: wsPJ.id, type: "EXPENSE", name: "Fornecedores", isEssential: true },
-      { workspaceId: wsPJ.id, type: "EXPENSE", name: "Folha e Encargos", isEssential: true },
-      { workspaceId: wsPJ.id, type: "EXPENSE", name: "Tributos e Impostos", isEssential: true },
-      { workspaceId: wsPJ.id, type: "EXPENSE", name: "Tecnologia e Operação", isEssential: true },
-      { workspaceId: wsPJ.id, type: "EXPENSE", name: "Comercial e Marketing", isEssential: false },
-    ],
-  });
-
-  // Cenários base P02 e Catálogo de Conexões P04 (DISCONNECTED por padrão, sem credenciais)
-  for (const ws of [wsPF, wsPJ]) {
-    await prisma.novaPlanningScenario.createMany({
-      data: [
-        {
-          workspaceId: ws.id,
-          name: "Cenário Base (Realista)",
-          kind: "BASE",
-          contingencyBufferPct: 0,
-          hypotheticalInflowCents: 0,
-          hypotheticalOutflowCents: 0,
-          notes: "Projeção oficial utilizando compromissos confirmados.",
-          createdBy: user.id,
-        },
-        {
-          workspaceId: ws.id,
-          name: "Cenário Conservador",
-          kind: "CONSERVATIVE",
-          contingencyBufferPct: 10,
-          hypotheticalInflowCents: 0,
-          hypotheticalOutflowCents: 0,
-          notes: "Considera apenas recebíveis de alta confiança e adiciona contingência de 10% nas saídas.",
-          createdBy: user.id,
-        },
-        {
-          workspaceId: ws.id,
-          name: "Cenário Otimista",
-          kind: "OPTIMISTIC",
-          contingencyBufferPct: 0,
-          hypotheticalInflowCents: 0,
-          hypotheticalOutflowCents: 0,
-          notes: "Inclui recebíveis de confiança média e receitas potenciais.",
-          createdBy: user.id,
-        },
-      ],
-    });
-
-    await prisma.financialConnection.createMany({
-      data: [
-        {
-          workspaceId: ws.id,
-          providerCode: "ITAU_OPENFINANCE_BR",
-          institutionName: "Itaú Unibanco (Open Finance Read-Only)",
-          status: "DISCONNECTED",
-        },
-        {
-          workspaceId: ws.id,
-          providerCode: "NUBANK_OPENFINANCE_BR",
-          institutionName: "Nu Pagamentos / Nubank (Open Finance Read-Only)",
-          status: "DISCONNECTED",
-        },
-        {
-          workspaceId: ws.id,
-          providerCode: "BTG_OPENFINANCE_BR",
-          institutionName: "BTG Pactual Empresas & Investimentos",
-          status: "DISCONNECTED",
-        },
-      ],
-    });
-  }
-}
-
 /**
  * Valida acesso RBAC ao workspace.
  */
 export async function authorizeWorkspaceAccess(
   workspaceId: string,
-  userId = "usr-nova-owner",
+  userId: string,
   requiredLevel: "VIEW" | "EDIT" | "ADMIN" = "VIEW"
 ) {
   const membership = await prisma.membership.findUnique({
@@ -269,8 +131,6 @@ export async function getWorkspaceFullState(params: {
   horizonDays?: number;
   scenarioKind?: "BASE" | "CONSERVATIVE" | "OPTIMISTIC";
 }) {
-  await ensureBaseWorkspaces();
-
   const workspaces = await prisma.workspace.findMany({
     orderBy: { type: "desc" }, // PERSONAL then BUSINESS
   });

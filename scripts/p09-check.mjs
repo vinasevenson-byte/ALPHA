@@ -1,0 +1,14 @@
+import { readFileSync, existsSync } from 'node:fs';
+import assert from 'node:assert/strict';
+const read = p => readFileSync(p, 'utf8');
+const api=read('src/app/api/platform/route.ts');const service=read('src/lib/nova-service.ts');const schema=read('prisma/schema.prisma');
+assert.match(schema,/provider\s*=\s*"postgresql"/);
+assert.match(schema,/model NovaSession/);
+assert.match(schema,/model NovaPasswordReset/);
+assert.match(api,/requireSession\(req\)/);
+assert.match(api,/requireWorkspace\(actorId, workspaceId/);
+assert.doesNotMatch(api,/const actorId = "usr-nova-owner"/);
+assert.doesNotMatch(service,/export async function ensureBaseWorkspaces/);
+assert.ok(existsSync('src/app/api/auth/[...action]/route.ts'));
+if(existsSync('.env')) console.warn('ATENÇÃO: .env local existe. Confira se está fora do Git!');
+console.log('OK: verificações estruturais do Pacote 09 concluídas. Não substituem testes de integração.');

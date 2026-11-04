@@ -1,6 +1,6 @@
 {
   "name": "nova-plataforma-financeira",
-  "version": "8.0.0",
+  "version": "9.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -12,23 +12,25 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "prisma generate --schema apps/api/prisma/schema.prisma && vitest run && node --test apps/api/test/*.test.mjs",
+    "test": "prisma generate --schema apps/api/prisma/schema.prisma && vitest run && node --test apps/api/test/*.test.mjs tests/p09-structural.test.mjs",
     "test:p06": "node --test apps/api/test/*.test.mjs",
     "test:p05-node": "node --test apps/dev-server/test/domain.test.mjs",
     "db:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema apps/api/prisma/schema.prisma",
+    "db:dev": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy --schema apps/api/prisma/schema.prisma",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio --schema apps/api/prisma/schema.prisma",
     "db:push": "prisma db push",
-    "preflight:p08": "node tools/preflight.mjs"
+    "preflight:p08": "node tools/preflight.mjs",
+    "p09:check": "node scripts/p09-check.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.11.0",
     "clsx": "^2.1.1",
     "decimal.js": "^10.5.0",
     "lucide-react": "^0.475.0",
-    "next": "^15.5.29",
+    "next": "15.5.28",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwind-merge": "^3.0.1"

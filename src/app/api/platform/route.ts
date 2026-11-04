@@ -3,11 +3,11 @@ import { prisma } from "@/lib/prisma";
 import {
   addDaysIso,
   authorizeWorkspaceAccess,
-  ensureBaseWorkspaces,
   getWorkspaceFullState,
   NovaDomainError,
   todayIso,
 } from "@/lib/nova-service";
+import { requireSession, requireWorkspace, requireSameOrigin, AuthError } from "@/lib/nova-auth";
 import {
   centsToDecimalString,
   decimalStringToCents,
@@ -53,8 +53,13 @@ function toJsonSafe<T>(obj: T): T {
 export async function GET(req: NextRequest) {
   const requestId = makeRequestId();
   try {
+    const session = await requireSession(req);
     const { searchParams } = new URL(req.url);
     const workspaceId = searchParams.get("workspaceId") ?? undefined;
+    if (!workspaceId) {
+      throw new AuthError("VALIDATION_ERROR", 422, "workspaceId é obrigatório.");
+    }
+    await requireWorkspace(session.userId, workspaceId, "VIEW");
     const horizonDays = Number(searchParams.get("horizonDays") ?? 30);
     const scenarioKind = (searchParams.get("scenario") ?? "BASE") as
       | "BASE"
@@ -66,12 +71,24 @@ export async function GET(req: NextRequest) {
       horizonDays,
       scenarioKind,
     });
+    const myMemberships = await prisma.membership.findMany({
+      where: { userId: session.userId, status: "ACTIVE" },
+      select: { workspaceId: true },
+    });
+    const allowed = new Set(myMemberships.map((m) => m.workspaceId));
+    state.workspaces = state.workspaces.filter((w) => allowed.has(w.id));
 
     return NextResponse.json(
       { ...state, requestId },
       { headers: { "X-Request-Id": requestId } }
     );
   } catch (err) {
+    if (err instanceof AuthError) {
+      return NextResponse.json(
+        { code: err.code, message: err.message, details: {}, requestId },
+        { status: err.status }
+      );
+    }
     if (err instanceof NovaDomainError) {
       return NextResponse.json(
         {
@@ -99,15 +116,56 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const requestId = makeRequestId();
   try {
-    await ensureBaseWorkspaces();
+    requireSameOrigin(req);
+    const session = await requireSession(req);
     const body = await req.json();
     const { action, workspaceId } = body;
     const idempotencyKey =
       req.headers.get("Idempotency-Key") ||
       body.idempotencyKey ||
       `idem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const actorId = await resolveActorId(req);
+    const actorId = session.userId;
     const today = todayIso();
+
+    if (
+      [
+        "RESET_TO_ZERO",
+        "LOAD_P02_FIXTURE",
+        "LOAD_P03_FIXTURE",
+        "SWITCH_ROLE",
+        "CHANGE_MEMBER_ROLE",
+      ].includes(action)
+    ) {
+      throw new AuthError(
+        "ACTION_DISABLED",
+        403,
+        "Ação de demonstração desativada no Pacote 09."
+      );
+    }
+    if (action === "CREATE_WORKSPACE") {
+      throw new AuthError(
+        "USE_AUTH_ENDPOINT",
+        409,
+        "Use /api/auth/create-workspace."
+      );
+    }
+    if (process.env.NOVA_ENABLE_FINANCIAL_WRITES !== "true") {
+      throw new AuthError(
+        "FINANCIAL_WRITES_DISABLED",
+        503,
+        "Operações financeiras de escrita estão bloqueadas até a conclusão da homologação."
+      );
+    }
+    if (!workspaceId) {
+      throw new AuthError(
+        "VALIDATION_ERROR",
+        422,
+        "workspaceId é obrigatório."
+      );
+    }
+    const adminActions = new Set(["SET_WORKSPACE_RECONCILED"]);
+    const level = adminActions.has(action) ? "ADMIN" : "EDIT";
+    await requireWorkspace(actorId, workspaceId, level);
 
     // =========================================================================
     // AÇÃO ESPECIAL 1: ZERAR WORKSPACE (ESTADO INICIAL EM ZERO R$ 0,00 P01/P02/P03/P04)
@@ -1882,6 +1940,12 @@ export async function POST(req: NextRequest) {
 
     throw new NovaDomainError("VALIDATION_ERROR", `Ação inválida: ${action}`, 400);
   } catch (err) {
+    if (err instanceof AuthError) {
+      return NextResponse.json(
+        { code: err.code, message: err.message, details: {}, requestId },
+        { status: err.status }
+      );
+    }
     if (err instanceof NovaDomainError) {
       return NextResponse.json(
         {

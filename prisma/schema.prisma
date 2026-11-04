@@ -8,14 +8,16 @@ datasource db {
 }
 
 model User {
-  id           String       @id @default(uuid())
-  email        String       @unique
-  passwordHash String
-  name         String
-  status       String       @default("ACTIVE")
-  createdAt    DateTime     @default(now())
-  memberships  Membership[]
-  sessions     Session[]
+  id                 String              @id @default(uuid())
+  email              String              @unique
+  passwordHash       String
+  name               String
+  status             String              @default("ACTIVE")
+  createdAt          DateTime            @default(now())
+  memberships        Membership[]
+  sessions           Session[]
+  novaSessions       NovaSession[]
+  novaPasswordResets NovaPasswordReset[]
 }
 
 model Session {
@@ -545,4 +547,40 @@ model FinancialConsentAudit {
   requestId    String
 
   @@index([workspaceId, connectionId, eventAt])
+}
+
+model NovaSession {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  createdAt   DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  userAgent   String?
+  ipHash      String?
+
+  @@index([userId, revokedAt, expiresAt])
+}
+
+model NovaPasswordReset {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, expiresAt])
+}
+
+model NovaAuthThrottle {
+  key          String    @id
+  attempts     Int       @default(0)
+  windowStart  DateTime  @default(now())
+  windowEndsAt DateTime?
+  blockedUntil DateTime?
+  updatedAt    DateTime  @updatedAt
 }

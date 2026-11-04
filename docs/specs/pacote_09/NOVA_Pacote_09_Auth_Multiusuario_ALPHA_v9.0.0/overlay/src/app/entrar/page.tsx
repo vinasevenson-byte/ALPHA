@@ -1,0 +1,9 @@
+'use client';
+import React,{useState} from 'react';
+import Link from 'next/link';
+import {useRouter} from 'next/navigation';
+export default function Entrar(){
+ const router=useRouter();const[email,setEmail]=useState('');const[password,setPassword]=useState('');const[error,setError]=useState('');const[busy,setBusy]=useState(false);
+ async function submit(e:React.FormEvent){e.preventDefault();setError('');setBusy(true);try{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});const j=await r.json();if(!r.ok)throw new Error(j.message||'Falha ao entrar');router.replace(`/app/${j.workspaceId}/visao-geral`);router.refresh();}catch(err){setError(err instanceof Error?err.message:'Erro inesperado');}finally{setBusy(false)}}
+ return <main className="min-h-screen bg-[#F5F6FA] flex items-center justify-center p-4"><form onSubmit={submit} className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl space-y-4 text-[#1E1B39]"><h1 className="text-2xl font-bold text-[#6C5CE7]">NOVA</h1><p>Entre na sua conta financeira</p><label className="block text-sm">E-mail<input className="block w-full mt-1 border rounded-lg p-3" type="email" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)}/></label><label className="block text-sm">Senha<input className="block w-full mt-1 border rounded-lg p-3" type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)}/></label>{error&&<p role="alert" className="text-red-700 text-sm">{error}</p>}<button disabled={busy} className="w-full bg-[#6C5CE7] text-white rounded-lg p-3 disabled:opacity-50">{busy?'Verificando…':'Entrar'}</button><div className="flex justify-between text-sm"><Link href="/cadastro">Criar conta</Link><Link href="/recuperar-senha">Esqueci a senha</Link></div></form></main>
+}

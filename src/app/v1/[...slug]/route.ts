@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkspaceFullState } from "@/lib/nova-service";
+import { requireSession, requireWorkspace, requireSameOrigin, AuthError } from "@/lib/nova-auth";
 import { centsToDecimalString, formatBRL } from "@/domain/planning";
 import { answerReadonlyAssistant } from "@/domain/intelligence";
 
@@ -14,7 +15,9 @@ export async function GET(
   try {
     // Ex: /v1/workspaces/:workspaceId/...
     if (slug[0] === "workspaces" && slug[1]) {
+      const session = await requireSession(req);
       const workspaceId = slug[1];
+      await requireWorkspace(session.userId, workspaceId, "VIEW");
       const horizonDays = Number(searchParams.get("horizonDays") ?? 180);
       const state = await getWorkspaceFullState({ workspaceId, horizonDays });
 
@@ -128,10 +131,16 @@ export async function GET(
       { headers: { "X-Request-Id": requestId } }
     );
   } catch (err) {
+    if (err instanceof AuthError) {
+      return NextResponse.json(
+        { code: err.code, message: err.message, details: {}, requestId },
+        { status: err.status }
+      );
+    }
     return NextResponse.json(
       {
         code: "INTERNAL_ERROR",
-        message: err instanceof Error ? err.message : "Erro inesperado",
+        message: "Erro inesperado.",
         details: {},
         requestId,
       },
@@ -148,8 +157,11 @@ export async function POST(
   const requestId = `req_${Date.now().toString(36)}`;
 
   try {
+    requireSameOrigin(req);
+    const session = await requireSession(req);
     if (slug[0] === "workspaces" && slug[1]) {
       const workspaceId = slug[1];
+      await requireWorkspace(session.userId, workspaceId, "VIEW");
       const subRoute = slug.slice(2).join("/");
 
       if (subRoute === "assistant/query") {
@@ -198,10 +210,16 @@ export async function POST(
       { status: 404 }
     );
   } catch (err) {
+    if (err instanceof AuthError) {
+      return NextResponse.json(
+        { code: err.code, message: err.message, requestId },
+        { status: err.status }
+      );
+    }
     return NextResponse.json(
       {
         code: "INTERNAL_ERROR",
-        message: err instanceof Error ? err.message : "Erro inesperado",
+        message: "Erro inesperado.",
         requestId,
       },
       { status: 500 }

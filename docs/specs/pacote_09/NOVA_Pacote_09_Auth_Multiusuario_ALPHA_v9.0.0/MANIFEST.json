@@ -1,0 +1,58 @@
+{
+  "CHANGELOG.md": {
+    "sha256": "cf57f3cd60b3b3a095d592673f35ddf6bd59a8d4ccd4bcada2ee02e8daea0349",
+    "bytes": 1001
+  },
+  "README.md": {
+    "sha256": "d2dce39c74eaef8efdf10ac783a939c3afe5c7930a602a9706e6678273bf52d6",
+    "bytes": 6720
+  },
+  "overlay/.env.example": {
+    "sha256": "2252530b0d67424e8a0145bd0c313de92456945ac69a782f51ce7e40e290bba6",
+    "bytes": 558
+  },
+  "overlay/vercel.json": {
+    "sha256": "457d467f69fe24ed236dbec979d1f70ee88095d245e3479b217138f5a2f15776",
+    "bytes": 117
+  },
+  "overlay/tests/p09-structural.test.mjs": {
+    "sha256": "0042eacd2a66f1a5dc1c1b333c9a7dd38ee9e580ecc34f0bcc232d07eef3a886",
+    "bytes": 1511
+  },
+  "overlay/scripts/apply-p09.py": {
+    "sha256": "9389b800dd1013190b8e67c8b84dcb9ee3cfbc34f4271a8d066d9a58023b6def",
+    "bytes": 10845
+  },
+  "overlay/scripts/p09-check.mjs": {
+    "sha256": "8128255992b1eac5aa239a13e20d5e325fde18b1d118b98c3fe5e4f1ec35a53c",
+    "bytes": 931
+  },
+  "overlay/src/lib/nova-auth.ts": {
+    "sha256": "7b8393efadb5d85ae9c66c85bc5cde61f5057dc165d83dfaa2d4d6426d28aa2a",
+    "bytes": 5563
+  },
+  "overlay/src/app/redefinir-senha/page.tsx": {
+    "sha256": "bb18a549f2ac1d2f38e00df8bdd94750a1b8d15a1627895038d3a564b31773df",
+    "bytes": 1261
+  },
+  "overlay/src/app/onboarding/page.tsx": {
+    "sha256": "d7a3e8e4c15f5aeae4fd10620da7bb916918c24e3cd31149aaf3fa31eaaefb4c",
+    "bytes": 1845
+  },
+  "overlay/src/app/recuperar-senha/page.tsx": {
+    "sha256": "278400af636ede75ead4419df26ad48dcaa26006d664189d837632eb92c02286",
+    "bytes": 1067
+  },
+  "overlay/src/app/entrar/page.tsx": {
+    "sha256": "eabee6f5cda7088eb869be3ae0b645868ca71aa82ee99cae817b5e425ff74522",
+    "bytes": 1903
+  },
+  "overlay/src/app/cadastro/page.tsx": {
+    "sha256": "d6531c20188026a2b8b3cf1aed54e6da3e531b1584bab9fd895e358cdc646e9a",
+    "bytes": 2163
+  },
+  "overlay/src/app/api/auth/[...action]/route.ts": {
+    "sha256": "0fed98f45118b0f27a93c41de2595a30c55fad6e61ab83b040d8d4a333bf1c87",
+    "bytes": 8216
+  }
+}
