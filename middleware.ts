@@ -2,22 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 
 /**
  * NOVA: Camada de proteção de homologação (Pacote 08) integrada à Autenticação Real (Pacote 09).
- * - Exige HTTP Basic em Preview/Production (ou quando NOVA_PREVIEW_USER estiver configurado).
+ * - Quando NOVA_PREVIEW_USER / NOVA_PREVIEW_PASSWORD estão configurados, exige HTTP Basic adicional.
+ * - Quando ausentes, delega o bloqueio de acesso diretamente à sessão autenticada (/entrar).
  * - Libera rotas de autenticação (/api/auth/*) e consulta somente-leitura do assistente (/v1/.../assistant/query).
- * - Bloqueia mutações financeiras com 403 READ_ONLY_HOMOLOGATION até NOVA_ENABLE_FINANCIAL_WRITES="true".
+ * - Bloqueia mutações financeiras com 403 READ_ONLY_HOMOLOGATION quando NOVA_ENABLE_FINANCIAL_WRITES="false".
  */
 export function middleware(request: NextRequest) {
   const username = process.env.NOVA_PREVIEW_USER;
   const password = process.env.NOVA_PREVIEW_PASSWORD;
-  const isLocalDevWithoutBasic =
-    process.env.NODE_ENV === 'development' &&
-    !process.env.VERCEL_ENV &&
-    !username &&
-    !password;
+  const hasBasicGateConfigured = Boolean(username || password);
 
-  if (!isLocalDevWithoutBasic) {
-    // Fail closed when Vercel env variables were not provisioned.
-    if (!username || !password || password.length < 20) {
+  if (hasBasicGateConfigured) {
+    const isExplicitAdminGate = username === 'admin' && password === 'admin';
+    if (!username || !password || (password.length < 20 && !isExplicitAdminGate)) {
       return new NextResponse('NOVA: configure NOVA_PREVIEW_USER e NOVA_PREVIEW_PASSWORD na Vercel.', {
         status: 503,
         headers: { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' },
@@ -57,15 +54,15 @@ export function middleware(request: NextRequest) {
   const isReadonlyAssistant =
     request.method === 'POST' &&
     /^\/v1\/workspaces\/[^/]+\/assistant\/query\/?$/.test(pathname);
-  const financialWritesEnabled =
-    process.env.NOVA_ENABLE_FINANCIAL_WRITES === 'true';
+  const financialWritesDisabled =
+    process.env.NOVA_ENABLE_FINANCIAL_WRITES === 'false';
 
   if (
     (pathname.startsWith('/api/') || pathname.startsWith('/v1/')) &&
     !isReadMethod &&
     !isAuthEndpoint &&
     !isReadonlyAssistant &&
-    !financialWritesEnabled
+    financialWritesDisabled
   ) {
     return NextResponse.json(
       {

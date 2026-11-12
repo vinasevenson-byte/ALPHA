@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { SESSION_COOKIE, sha256Hex } from "@/lib/nova-auth";
+import { ensureFallbackSessionHydrated, SESSION_COOKIE, sha256Hex } from "@/lib/nova-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +13,7 @@ export default async function HomePage() {
   }
 
   try {
+    await ensureFallbackSessionHydrated(raw);
     const session = await prisma.novaSession.findUnique({
       where: { tokenHash: sha256Hex(raw) },
       include: { user: true },

@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { SESSION_COOKIE, sha256Hex } from "@/lib/nova-auth";
+import { ensureFallbackSessionHydrated, SESSION_COOKIE, sha256Hex } from "@/lib/nova-auth";
 import { NovaPlatformApp, NovaRouteKey } from "@/components/NovaPlatformApp";
 
 export default async function WorkspaceRoutePage({
@@ -14,6 +14,7 @@ export default async function WorkspaceRoutePage({
   const raw = cookieStore.get(SESSION_COOKIE)?.value;
   if (!raw) redirect("/entrar");
 
+  await ensureFallbackSessionHydrated(raw);
   const session = await prisma.novaSession.findUnique({
     where: { tokenHash: sha256Hex(raw) },
     include: { user: true },

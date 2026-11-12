@@ -218,7 +218,7 @@ export async function POST(req: NextRequest) {
         "Use /api/auth/create-workspace."
       );
     }
-    if (process.env.NOVA_ENABLE_FINANCIAL_WRITES !== "true") {
+    if (process.env.NOVA_ENABLE_FINANCIAL_WRITES === "false") {
       throw new AuthError(
         "FINANCIAL_WRITES_DISABLED",
         503,

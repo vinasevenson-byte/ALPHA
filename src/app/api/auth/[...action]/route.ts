@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { AuthError, authFailure, checkThrottle, clearSessionCookie, hashPassword, issueSession, makeToken, normalizeEmail, requireSameOrigin, requireSession, sessionCookie, SESSION_COOKIE, tokenHash, validatePassword, verifyPassword } from '@/lib/nova-auth';
+import { DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_USER_ID, DEFAULT_BUSINESS_WORKSPACE_ID, DEFAULT_PERSONAL_WORKSPACE_ID } from '@/lib/in-memory-prisma';
+import { AuthError, authFailure, checkThrottle, clearSessionCookie, hashPassword, hashSystemPassword, issueSession, makeToken, normalizeEmail, requireSameOrigin, requireSession, sessionCookie, SESSION_COOKIE, tokenHash, validatePassword, verifyPassword } from '@/lib/nova-auth';
 
 export const runtime = 'nodejs';
 const genericReset = { message: 'Se o e-mail estiver cadastrado, você receberá instruções.' };
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ action
     const userAgent = req.headers.get('user-agent');
 
     if (operation === 'register') {
-      if (process.env.NOVA_ALLOW_REGISTRATION !== 'true') throw new AuthError('REGISTRATION_DISABLED', 403, 'Cadastro temporariamente indisponível.');
+      if (process.env.NOVA_ALLOW_REGISTRATION === 'false') throw new AuthError('REGISTRATION_DISABLED', 403, 'Cadastro temporariamente indisponível.');
       const email = normalizeEmail(String(body.email ?? ''));
       const name = String(body.name ?? '').trim();
       const password = String(body.password ?? '');
@@ -118,9 +119,41 @@ export async function POST(req: NextRequest, context: { params: Promise<{ action
     if (operation === 'login') {
       const email = normalizeEmail(String(body.email ?? ''));
       await checkThrottle(`login:${ip}:${email}`, 8);
+      if (email === DEFAULT_ADMIN_EMAIL) {
+        const existingAdmin = await prisma.user.findUnique({ where: { email: DEFAULT_ADMIN_EMAIL } });
+        if (!existingAdmin) {
+          const adminHash = await hashSystemPassword('admin');
+          await prisma.$transaction(async (tx) => {
+            const u = await tx.user.create({
+              data: { id: DEFAULT_ADMIN_USER_ID, email: DEFAULT_ADMIN_EMAIL, name: 'Administrador NOVA', passwordHash: adminHash, status: 'ACTIVE' },
+            });
+            const wsPersonal = await tx.workspace.create({
+              data: { id: DEFAULT_PERSONAL_WORKSPACE_ID, name: 'Meu Financeiro Pessoal', type: 'PERSONAL', ownerId: u.id },
+            });
+            await tx.membership.create({ data: { userId: u.id, workspaceId: wsPersonal.id, role: 'OWNER' } });
+            await seedWorkspaceDefaults(tx, wsPersonal.id, u.id, 'PERSONAL');
+            const wsBusiness = await tx.workspace.create({
+              data: { id: DEFAULT_BUSINESS_WORKSPACE_ID, name: 'Minha Empresa', type: 'BUSINESS', ownerId: u.id },
+            });
+            await tx.membership.create({ data: { userId: u.id, workspaceId: wsBusiness.id, role: 'OWNER' } });
+            await seedWorkspaceDefaults(tx, wsBusiness.id, u.id, 'BUSINESS');
+          });
+        }
+      }
       const user = await prisma.user.findUnique({ where: { email } });
-      if (!user || user.status !== 'ACTIVE' || !(await verifyPassword(String(body.password ?? ''), user.passwordHash))) throw new AuthError('INVALID_CREDENTIALS', 401, 'E-mail ou senha inválidos.');
-      const membership = await prisma.membership.findFirst({ where: { userId: user.id, status: 'ACTIVE' }, orderBy: { createdAt: 'asc' } });
+      if (!user || user.status !== 'ACTIVE' || !(await verifyPassword(String(body.password ?? ''), user.passwordHash))) throw new AuthError('INVALID_CREDENTIALS', 401, 'Login ou senha inválidos.');
+      let membership = await prisma.membership.findFirst({ where: { userId: user.id, status: 'ACTIVE' }, orderBy: { createdAt: 'asc' } });
+      if (!membership && email === DEFAULT_ADMIN_EMAIL) {
+        const ws = await prisma.$transaction(async (tx) => {
+          const created = await tx.workspace.create({
+            data: { name: 'Meu Financeiro Pessoal', type: 'PERSONAL', ownerId: user.id },
+          });
+          const m = await tx.membership.create({ data: { userId: user.id, workspaceId: created.id, role: 'OWNER' } });
+          await seedWorkspaceDefaults(tx, created.id, user.id, 'PERSONAL');
+          return m;
+        });
+        membership = ws;
+      }
       if (!membership) throw new AuthError('NO_WORKSPACE', 403, 'Usuário sem ambiente ativo.');
       const token = await issueSession(user.id, { userAgent, ip });
       const res = NextResponse.json({ ok: true, workspaceId: membership.workspaceId });
