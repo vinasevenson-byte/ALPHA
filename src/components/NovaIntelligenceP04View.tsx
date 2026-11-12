@@ -38,10 +38,16 @@ export type P04IntegrationSubTab =
   | "consentimentos";
 
 export interface P04HealthIndexPayload {
-  totalScore: number;
-  band: "CRITICAL" | "ATTENTION" | "STABLE" | "HEALTHY" | "EXCELLENT";
-  summary: string;
-  dimensions: Array<{
+  totalScore: number | null;
+  band?:
+    | "CRITICAL"
+    | "ATTENTION"
+    | "STABLE"
+    | "HEALTHY"
+    | "EXCELLENT"
+    | "INSUFFICIENT_DATA";
+  summary?: string;
+  dimensions?: Array<{
     key: "LIQUIDITY" | "PUNCTUALITY" | "BUDGET" | "RESERVE" | "CONCENTRATION";
     label: string;
     weightPct: number;
@@ -50,12 +56,13 @@ export interface P04HealthIndexPayload {
     status: "GOOD" | "WARNING" | "CRITICAL";
     rationale: string;
   }>;
-  evidence: Array<{ label: string; value: string }>;
+  evidence: Array<{ label?: string; metric?: string; value: string }>;
 }
 
 export interface P04QualityPayload {
-  status: "COMPLETE" | "PARTIAL" | "INSUFFICIENT_DATA" | "STALE";
-  reasons: string[];
+  status?: "COMPLETE" | "PARTIAL" | "INSUFFICIENT_DATA" | "STALE";
+  reasons?: string[];
+  eligibleForAutomatedSuggestions?: boolean;
 }
 
 export interface FinancialInsightItem {
@@ -74,19 +81,21 @@ export interface FinancialInsightItem {
 
 export interface FinancialConnectionItem {
   id: string;
-  providerId: string;
+  providerId?: string;
+  providerCode?: string;
   institutionName: string;
   status: string;
-  scopes: string;
+  scopes?: string;
   consentExpiresAt?: string | null;
   lastSyncedAt?: string | null;
 }
 
 export interface ImportBatchItem {
   id: string;
-  sourceKind: string;
+  sourceKind?: string;
+  sourceType?: string;
   fileName: string;
-  fileHash: string;
+  fileHash?: string;
   totalRows: number;
   importedRows: number;
   duplicateRows: number;
@@ -99,22 +108,35 @@ export interface ImportedTransactionItem {
   providerId: string;
   accountExternalId: string;
   externalId: string;
-  dedupeKey: string;
-  occurredAt: string;
+  dedupeKey?: string;
+  rawHash?: string;
+  occurredAt?: string;
+  postedOn?: string;
   amountCents: number;
   direction: string;
   description: string;
-  reconciliationState: "STAGED" | "RECONCILED" | "IGNORED";
+  reconciliationState?: "STAGED" | "RECONCILED" | "IGNORED";
+  state?: string;
   reconciledLedgerTxId?: string | null;
+  suggestedMatch?: {
+    kind: "TRANSACTION" | "INSTALLMENT";
+    id: string;
+    title: string;
+    dueOn: string;
+    amountCents: number;
+  } | null;
 }
 
 export interface ConsentAuditItem {
   id: string;
   connectionId: string;
   action: string;
-  actorUserId: string;
-  scopes: string;
-  createdAt: string;
+  actorUserId?: string;
+  actorId?: string;
+  scopes?: string;
+  scopesJson?: string;
+  createdAt?: string;
+  eventAt?: string;
 }
 
 export interface UnifiedAlertItem {
@@ -271,6 +293,7 @@ export function NovaIntelligenceP04View({
   const [csvProviderId, setCsvProviderId] = useState("ITAU_OPENFINANCE_BR");
   const [csvAccountExtId, setCsvAccountExtId] = useState("ITAU-AG0001-CC9988");
   const [csvRows, setCsvRows] = useState(DEFAULT_CSV_BATCH);
+  const [rawFileContent, setRawFileContent] = useState<string | null>(null);
   const [reconcileTargetAccountId, setReconcileTargetAccountId] = useState(
     accounts[0]?.id ?? ""
   );
@@ -280,6 +303,16 @@ export function NovaIntelligenceP04View({
       setReconcileTargetAccountId(accounts[0].id);
     }
   }, [accounts, reconcileTargetAccountId]);
+
+  const handleUploadStatementFile = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    setCsvFileName(file.name);
+    setRawFileContent(text);
+  };
 
   const askAssistant = async (qText?: string) => {
     const query = (qText ?? questionInput).trim();
@@ -301,9 +334,19 @@ export function NovaIntelligenceP04View({
             id: `ask-${Date.now()}`,
             question: query,
             answer: data.answer,
-            evidence: data.evidence ?? [],
-            limitations: data.limitations ?? [],
-            readOnlyConfirmed: Boolean(data.readOnlyGuardrail),
+            evidence: (data.evidence ?? []).map(
+              (ev: { label?: string; metric?: string; value: string }) => ({
+                label: ev.label || ev.metric || "Evidência",
+                value: ev.value,
+              })
+            ),
+            limitations:
+              data.limitations && data.limitations.length > 0
+                ? data.limitations
+                : [data.uncertainty || "Modo somente leitura verificado."],
+            readOnlyConfirmed: Boolean(
+              data.readOnlyGuardrail ?? data.blockedAction ?? true
+            ),
             timestamp: new Date().toLocaleTimeString("pt-BR", {
               hour: "2-digit",
               minute: "2-digit",
@@ -322,8 +365,18 @@ export function NovaIntelligenceP04View({
   );
 
   const stagedCount = importedTransactions.filter(
-    (t) => t.reconciliationState === "STAGED"
+    (t) => (t.reconciliationState ?? t.state) === "STAGED"
   ).length;
+
+  const qualityStatusLabel =
+    quality?.status ??
+    (quality?.eligibleForAutomatedSuggestions ? "COMPLETE" : "INSUFFICIENT_DATA");
+  const qualityReasons = quality?.reasons ?? [];
+  const hasHealthScore = Boolean(
+    healthIndex &&
+      healthIndex.totalScore !== null &&
+      (healthIndex.dimensions?.length ?? 0) > 0
+  );
 
   // =========================================================================
   // MODO 1: INTELIGÊNCIA FINANCEIRA (PACOTE 04)
@@ -389,7 +442,7 @@ export function NovaIntelligenceP04View({
               },
               {
                 key: "saude-dados" as P04IntelSubTab,
-                label: `Qualidade dos Dados (${quality.status})`,
+                label: `Qualidade dos Dados (${qualityStatusLabel})`,
                 icon: Database,
               },
             ].map((tab) => {
@@ -428,10 +481,12 @@ export function NovaIntelligenceP04View({
                   </span>
                 </div>
                 <div className="mt-2 font-mono text-2xl font-extrabold tabular-nums text-[#141726]">
-                  {healthIndex ? `${healthIndex.totalScore}/100` : "—"}
+                  {hasHealthScore && healthIndex
+                    ? `${healthIndex.totalScore}/100`
+                    : "—"}
                 </div>
                 <p className="mt-1 text-[11px] font-semibold text-[#6D28D9]">
-                  {healthIndex
+                  {hasHealthScore && healthIndex
                     ? `Faixa: ${healthIndex.band}`
                     : "Sem base suficiente (Estado Zero)"}
                 </p>
@@ -481,12 +536,12 @@ export function NovaIntelligenceP04View({
                   </span>
                 </div>
                 <div className="mt-2 font-mono text-xl font-extrabold text-[#141726]">
-                  {quality.status}
+                  {qualityStatusLabel}
                 </div>
                 <p className="mt-1 text-[11px] text-[#5B6275]">
-                  {quality.reasons.length === 0
+                  {qualityReasons.length === 0
                     ? "100% conciliado e atualizado"
-                    : `Pendências: ${quality.reasons.join(", ")}`}
+                    : `Pendências: ${qualityReasons.join(", ")}`}
                 </p>
               </div>
             </div>
@@ -507,7 +562,7 @@ export function NovaIntelligenceP04View({
                   </div>
                 </div>
 
-                {!healthIndex ? (
+                {!hasHealthScore || !healthIndex?.dimensions ? (
                   <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-[#F5F6FA] p-8 text-center">
                     <p className="text-sm font-bold text-[#141726]">
                       Estado Zero: Nenhum Score Fictício Exibido
@@ -721,6 +776,9 @@ export function NovaIntelligenceP04View({
                                     {
                                       action: "ACKNOWLEDGE_INSIGHT",
                                       insightId: ins.id,
+                                      code: ins.code,
+                                      title: ins.title,
+                                      summary: ins.summary,
                                       status: "ACKNOWLEDGED",
                                     },
                                     "Insight reconhecido e auditado."
@@ -736,6 +794,9 @@ export function NovaIntelligenceP04View({
                                     {
                                       action: "ACKNOWLEDGE_INSIGHT",
                                       insightId: ins.id,
+                                      code: ins.code,
+                                      title: ins.title,
+                                      summary: ins.summary,
                                       status: "DISMISSED",
                                     },
                                     "Insight dispensado."
@@ -1041,7 +1102,7 @@ export function NovaIntelligenceP04View({
                     Status Global de Qualidade
                   </span>
                   <span className="rounded-full bg-[#EFE9FF] px-3 py-1 font-mono text-xs font-extrabold text-[#6D28D9]">
-                    {quality.status}
+                    {qualityStatusLabel}
                   </span>
                 </div>
                 <div className="mt-3 space-y-2 text-xs">
@@ -1200,7 +1261,7 @@ export function NovaIntelligenceP04View({
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {PROVIDER_CATALOG.map((prov) => {
             const existing = connections.find(
-              (c) => c.providerId === prov.providerId
+              (c) => (c.providerId || c.providerCode) === prov.providerId
             );
             const isActive = existing?.status === "ACTIVE";
             return (
@@ -1264,6 +1325,7 @@ export function NovaIntelligenceP04View({
                         onExecuteAction(
                           {
                             action: "GRANT_CONNECTION_CONSENT",
+                            connectionId: existing?.id,
                             providerId: prov.providerId,
                             institutionName: prov.institutionName,
                           },
@@ -1288,16 +1350,34 @@ export function NovaIntelligenceP04View({
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="rounded-2xl border border-[#E4E7EF] bg-white p-6 shadow-sm lg:col-span-7">
             <h3 className="text-base font-extrabold text-[#141726]">
-              Importador de Extrato Bancário (Staging com Deduplicação SHA-256)
+              Importador de Extrato Bancário (.CSV / .OFX com Deduplicação SHA-256)
             </h3>
             <p className="mt-1 text-xs text-[#5B6275]">
-              Cada linha gera uma chave determinística{" "}
-              <code className="rounded bg-[#F5F6FA] px-1 py-0.5 font-mono text-[10px]">
-                externalDedupeKey(workspaceId, providerId, accountExternalId,
-                externalId)
-              </code>
-              . Reimportar o mesmo lote ignora duplicidades automaticamente.
+              Selecione um arquivo real <code>.csv</code> ou <code>.ofx</code> do seu banco, ou utilize o lote editável. Reimportar o mesmo extrato ignora duplicidades automaticamente.
             </p>
+
+            {/* Upload Real de Arquivo .CSV ou .OFX */}
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-[#6D28D9]/40 bg-[#EFE9FF]/40 p-3.5 text-xs">
+              <div>
+                <div className="font-bold text-[#141726]">
+                  Upload Direto de Extrato (.csv ou .ofx)
+                </div>
+                <div className="text-[11px] text-[#5B6275]">
+                  {rawFileContent
+                    ? `Arquivo carregado (${csvFileName}) — ${rawFileContent.length} bytes prontos para staging.`
+                    : "Formato CSV (YYYY-MM-DD,Descrição,Valor,CREDIT|DEBIT,ID) ou padrão bancário OFX (<STMTTRN>)."}
+                </div>
+              </div>
+              <label className="cursor-pointer rounded-xl bg-white px-3.5 py-2 text-xs font-bold text-[#6D28D9] shadow-2xs ring-1 ring-[#6D28D9]/30 hover:bg-[#6D28D9] hover:text-white">
+                Selecionar .CSV / .OFX
+                <input
+                  type="file"
+                  accept=".csv,.ofx,.txt"
+                  onChange={handleUploadStatementFile}
+                  className="hidden"
+                />
+              </label>
+            </div>
 
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
@@ -1335,55 +1415,76 @@ export function NovaIntelligenceP04View({
               </div>
             </div>
 
-            <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-[#F5F6FA] text-[10px] font-bold uppercase text-slate-500">
-                  <tr>
-                    <th className="px-3 py-2">ID Externo</th>
-                    <th className="px-3 py-2">Data</th>
-                    <th className="px-3 py-2">Direção</th>
-                    <th className="px-3 py-2">Valor (R$)</th>
-                    <th className="px-3 py-2">Descrição</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {csvRows.map((row, idx) => (
-                    <tr key={idx}>
-                      <td className="px-3 py-2 font-mono text-[11px]">
-                        {row.externalId}
-                      </td>
-                      <td className="px-3 py-2 font-mono text-[11px]">
-                        {row.occurredAt}
-                      </td>
-                      <td className="px-3 py-2">
-                        <span
-                          className={`rounded px-2 py-0.5 font-mono text-[10px] font-bold ${
-                            row.direction === "SELF_TRANSFER"
-                              ? "bg-[#EFE9FF] text-[#6D28D9]"
-                              : row.direction === "CREDIT"
-                              ? "bg-emerald-100 text-emerald-800"
-                              : "bg-rose-100 text-rose-800"
-                          }`}
-                        >
-                          {row.direction}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 font-mono font-bold">
-                        R$ {row.amountDecimal}
-                      </td>
-                      <td className="px-3 py-2 text-slate-600">
-                        {row.description}
-                      </td>
+            {rawFileContent ? (
+              <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5 text-xs text-emerald-900">
+                <div className="flex items-center justify-between">
+                  <strong>Conteúdo do arquivo pronto para importação:</strong>
+                  <button
+                    type="button"
+                    onClick={() => setRawFileContent(null)}
+                    className="text-[11px] font-bold text-rose-700 underline"
+                  >
+                    Remover arquivo e voltar à tabela manual
+                  </button>
+                </div>
+                <pre className="mt-2 max-h-32 overflow-auto rounded bg-white/80 p-2 font-mono text-[10px] text-slate-700">
+                  {rawFileContent.slice(0, 600)}
+                </pre>
+              </div>
+            ) : (
+              <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#F5F6FA] text-[10px] font-bold uppercase text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2">ID Externo</th>
+                      <th className="px-3 py-2">Data</th>
+                      <th className="px-3 py-2">Direção</th>
+                      <th className="px-3 py-2">Valor (R$)</th>
+                      <th className="px-3 py-2">Descrição</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {csvRows.map((row, idx) => (
+                      <tr key={idx}>
+                        <td className="px-3 py-2 font-mono text-[11px]">
+                          {row.externalId}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-[11px]">
+                          {row.occurredAt}
+                        </td>
+                        <td className="px-3 py-2">
+                          <span
+                            className={`rounded px-2 py-0.5 font-mono text-[10px] font-bold ${
+                              row.direction === "SELF_TRANSFER"
+                                ? "bg-[#EFE9FF] text-[#6D28D9]"
+                                : row.direction === "CREDIT"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-rose-100 text-rose-800"
+                            }`}
+                          >
+                            {row.direction}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 font-mono font-bold">
+                          R$ {row.amountDecimal}
+                        </td>
+                        <td className="px-3 py-2 text-slate-600">
+                          {row.description}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"
-                onClick={() => setCsvRows(DEFAULT_CSV_BATCH)}
+                onClick={() => {
+                  setRawFileContent(null);
+                  setCsvRows(DEFAULT_CSV_BATCH);
+                }}
                 className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
               >
                 Restaurar Lote Padrão (Com PIX Mesma Titularidade)
@@ -1392,13 +1493,21 @@ export function NovaIntelligenceP04View({
                 type="button"
                 onClick={async () => {
                   const ok = await onExecuteAction(
-                    {
-                      action: "STAGE_CSV_IMPORT",
-                      fileName: csvFileName,
-                      providerId: csvProviderId,
-                      accountExternalId: csvAccountExtId,
-                      rows: csvRows,
-                    },
+                    rawFileContent
+                      ? {
+                          action: "STAGE_CSV_IMPORT",
+                          fileName: csvFileName,
+                          providerId: csvProviderId,
+                          accountExternalId: csvAccountExtId,
+                          csvContent: rawFileContent,
+                        }
+                      : {
+                          action: "STAGE_CSV_IMPORT",
+                          fileName: csvFileName,
+                          providerId: csvProviderId,
+                          accountExternalId: csvAccountExtId,
+                          rows: csvRows,
+                        },
                     "Lote processado com deduplicação determinística SHA-256."
                   );
                   if (ok) setIntegrationTab("conciliacao");
@@ -1406,7 +1515,7 @@ export function NovaIntelligenceP04View({
                 className="inline-flex items-center gap-1.5 rounded-xl bg-[#6D28D9] px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-[#5B21B6]"
               >
                 <Upload className="h-3.5 w-3.5" />
-                Processar Lote para Staging (Testar Deduplicação)
+                Processar Lote para Staging
               </button>
             </div>
           </div>
@@ -1430,21 +1539,21 @@ export function NovaIntelligenceP04View({
                     <div className="flex items-center justify-between font-bold text-[#141726]">
                       <span>{b.fileName}</span>
                       <span className="rounded bg-[#EFE9FF] px-2 py-0.5 font-mono text-[10px] text-[#6D28D9]">
-                        {b.sourceKind}
+                        {b.sourceKind || b.sourceType || "CSV"}
                       </span>
                     </div>
                     <div className="mt-2 grid grid-cols-3 gap-2 font-mono text-[11px]">
                       <div className="rounded bg-white p-2 text-center">
                         <div className="text-[10px] text-slate-400">Total</div>
-                        <div className="font-bold">{b.totalRows}</div>
+                        <div className="font-bold">{b.totalRows ?? 0}</div>
                       </div>
                       <div className="rounded bg-emerald-50 p-2 text-center text-emerald-800">
                         <div className="text-[10px]">Novas</div>
-                        <div className="font-bold">{b.importedRows}</div>
+                        <div className="font-bold">{b.importedRows ?? 0}</div>
                       </div>
                       <div className="rounded bg-amber-50 p-2 text-center text-amber-800">
                         <div className="text-[10px]">Duplicadas</div>
-                        <div className="font-bold">{b.duplicateRows}</div>
+                        <div className="font-bold">{b.duplicateRows ?? 0}</div>
                       </div>
                     </div>
                   </div>
@@ -1464,11 +1573,7 @@ export function NovaIntelligenceP04View({
                 Fila de Conciliação de Transações Externas (Staging → Ledger P01)
               </h3>
               <p className="text-xs text-[#5B6275]">
-                Transações marcadas como{" "}
-                <strong className="text-[#6D28D9]">SELF_TRANSFER</strong> são
-                conciliadas como transferência interna (
-                <code>TRANSFER_IN</code>), jamais inflando as receitas do
-                workspace.
+                Detecta correspondências com parcelas/previstos (Auto-Match ±5 dias) e preserva transferências próprias (<code>SELF_TRANSFER</code>) sem inflar receitas.
               </p>
             </div>
             <div className="flex items-center gap-2 text-xs">
@@ -1494,7 +1599,7 @@ export function NovaIntelligenceP04View({
               <thead className="border-b border-slate-200 bg-[#F5F6FA] text-[10px] font-bold uppercase text-slate-500">
                 <tr>
                   <th className="px-4 py-3">Data / ID Externo</th>
-                  <th className="px-4 py-3">Descrição</th>
+                  <th className="px-4 py-3">Descrição & Auto-Match</th>
                   <th className="px-4 py-3">Classificação</th>
                   <th className="px-4 py-3 text-right">Valor</th>
                   <th className="px-4 py-3">Status</th>
@@ -1508,101 +1613,142 @@ export function NovaIntelligenceP04View({
                       colSpan={6}
                       className="px-4 py-8 text-center text-slate-500"
                     >
-                      Nenhuma transação externa em staging. Importe um lote na
-                      aba anterior ou carregue os dados de homologação.
+                      Nenhuma transação externa em staging. Importe um arquivo CSV/OFX na aba anterior.
                     </td>
                   </tr>
                 ) : (
-                  importedTransactions.map((tx) => (
-                    <tr key={tx.id} className="hover:bg-[#F5F6FA]/60">
-                      <td className="px-4 py-3 font-mono text-[11px]">
-                        <div className="font-bold text-[#141726]">
-                          {formatDateBR(tx.occurredAt.slice(0, 10))}
-                        </div>
-                        <div className="text-slate-400">{tx.externalId}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="font-semibold text-[#141726]">
-                          {tx.description}
-                        </div>
-                        <div className="font-mono text-[10px] text-slate-400">
-                          Dedupe SHA-256: {tx.dedupeKey.slice(0, 16)}...
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`rounded-lg px-2 py-0.5 font-mono text-[10px] font-bold ${
-                            tx.direction === "SELF_TRANSFER"
-                              ? "bg-[#EFE9FF] text-[#6D28D9]"
-                              : tx.direction === "CREDIT"
-                              ? "bg-emerald-100 text-emerald-800"
-                              : "bg-rose-100 text-rose-800"
-                          }`}
-                        >
-                          {tx.direction === "SELF_TRANSFER"
-                            ? "TRANSFERÊNCIA PRÓPRIA (NÃO RECEITA)"
-                            : tx.direction}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono font-bold">
-                        {formatBRL(tx.amountCents)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                            tx.reconciliationState === "RECONCILED"
-                              ? "bg-emerald-100 text-emerald-800"
-                              : tx.reconciliationState === "IGNORED"
-                              ? "bg-slate-200 text-slate-600"
-                              : "bg-amber-100 text-amber-800"
-                          }`}
-                        >
-                          {tx.reconciliationState}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {tx.reconciliationState === "STAGED" ? (
-                          <div className="inline-flex items-center gap-1.5">
-                            <button
-                              onClick={() =>
-                                onExecuteAction(
-                                  {
-                                    action: "RECONCILE_IMPORTED_ROW",
-                                    importedTxId: tx.id,
-                                    targetAccountId: reconcileTargetAccountId,
-                                    decision: "APPROVE",
-                                  },
-                                  "Item conciliado com sucesso no Ledger P01."
-                                )
-                              }
-                              className="rounded-lg bg-[#6D28D9] px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#5B21B6]"
-                            >
-                              Aprovar no Ledger
-                            </button>
-                            <button
-                              onClick={() =>
-                                onExecuteAction(
-                                  {
-                                    action: "RECONCILE_IMPORTED_ROW",
-                                    importedTxId: tx.id,
-                                    decision: "IGNORE",
-                                  },
-                                  "Item externo ignorado."
-                                )
-                              }
-                              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
-                            >
-                              Ignorar
-                            </button>
+                  importedTransactions.map((tx) => {
+                    const txDate = (tx.occurredAt || tx.postedOn || "").slice(0, 10);
+                    const txHash = tx.dedupeKey || tx.rawHash || tx.id;
+                    const recState =
+                      tx.reconciliationState ??
+                      (tx.state === "IMPORTED"
+                        ? "RECONCILED"
+                        : tx.state === "IGNORED"
+                        ? "IGNORED"
+                        : "STAGED");
+
+                    return (
+                      <tr key={tx.id} className="hover:bg-[#F5F6FA]/60">
+                        <td className="px-4 py-3 font-mono text-[11px]">
+                          <div className="font-bold text-[#141726]">
+                            {formatDateBR(txDate)}
                           </div>
-                        ) : (
-                          <span className="font-mono text-[10px] text-slate-400">
-                            Processado
+                          <div className="text-slate-400">{tx.externalId}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-semibold text-[#141726]">
+                            {tx.description}
+                          </div>
+                          <div className="font-mono text-[10px] text-slate-400">
+                            Dedupe SHA-256: {txHash.slice(0, 16)}...
+                          </div>
+                          {recState === "STAGED" && tx.suggestedMatch && (
+                            <div className="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800 ring-1 ring-emerald-200">
+                              <Sparkles className="h-3 w-3" />
+                              Auto-Match: {tx.suggestedMatch.title} (Venc.{" "}
+                              {formatDateBR(tx.suggestedMatch.dueOn)})
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`rounded-lg px-2 py-0.5 font-mono text-[10px] font-bold ${
+                              tx.direction === "SELF_TRANSFER"
+                                ? "bg-[#EFE9FF] text-[#6D28D9]"
+                                : tx.direction === "CREDIT"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-rose-100 text-rose-800"
+                            }`}
+                          >
+                            {tx.direction === "SELF_TRANSFER"
+                              ? "TRANSFERÊNCIA PRÓPRIA (NÃO RECEITA)"
+                              : tx.direction}
                           </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-bold">
+                          {formatBRL(tx.amountCents)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                              recState === "RECONCILED"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : recState === "IGNORED"
+                                ? "bg-slate-200 text-slate-600"
+                                : "bg-amber-100 text-amber-800"
+                            }`}
+                          >
+                            {recState}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {recState === "STAGED" ? (
+                            <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
+                              {tx.suggestedMatch && (
+                                <button
+                                  onClick={() =>
+                                    onExecuteAction(
+                                      {
+                                        action: "RECONCILE_IMPORTED_ROW",
+                                        importedRowId: tx.id,
+                                        importedTxId: tx.id,
+                                        targetAccountId: reconcileTargetAccountId,
+                                        decision: "MATCH_EXISTING",
+                                        matchKind: tx.suggestedMatch?.kind,
+                                        matchId: tx.suggestedMatch?.id,
+                                      },
+                                      "Item conciliado e baixado no compromisso existente (sem duplicidade)."
+                                    )
+                                  }
+                                  className="rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-emerald-700"
+                                >
+                                  Vincular s/ Duplicar
+                                </button>
+                              )}
+                              <button
+                                onClick={() =>
+                                  onExecuteAction(
+                                    {
+                                      action: "RECONCILE_IMPORTED_ROW",
+                                      importedRowId: tx.id,
+                                      importedTxId: tx.id,
+                                      targetAccountId: reconcileTargetAccountId,
+                                      decision: "APPROVE",
+                                    },
+                                    "Item conciliado com sucesso no Ledger P01."
+                                  )
+                                }
+                                className="rounded-lg bg-[#6D28D9] px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#5B21B6]"
+                              >
+                                Aprovar Novo
+                              </button>
+                              <button
+                                onClick={() =>
+                                  onExecuteAction(
+                                    {
+                                      action: "RECONCILE_IMPORTED_ROW",
+                                      importedRowId: tx.id,
+                                      importedTxId: tx.id,
+                                      decision: "IGNORE",
+                                    },
+                                    "Item externo ignorado."
+                                  )
+                                }
+                                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                              >
+                                Ignorar
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="font-mono text-[10px] text-slate-400">
+                              Processado
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -1627,34 +1773,39 @@ export function NovaIntelligenceP04View({
                 Nenhum evento de consentimento registrado ainda.
               </div>
             ) : (
-              consentAudits.map((ca) => (
-                <div
-                  key={ca.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-3.5 text-xs"
-                >
-                  <div>
-                    <span
-                      className={`mr-2 rounded px-2 py-0.5 font-mono text-[10px] font-bold ${
-                        ca.action === "GRANTED"
-                          ? "bg-emerald-100 text-emerald-800"
-                          : "bg-rose-100 text-rose-800"
-                      }`}
-                    >
-                      {ca.action}
-                    </span>
-                    <strong className="text-[#141726]">
-                      Conexão #{ca.connectionId.slice(0, 10)}
-                    </strong>
-                    <span className="ml-2 text-slate-500">
-                      • Escopos: {ca.scopes}
-                    </span>
+              consentAudits.map((ca) => {
+                const actorDisplay = ca.actorUserId || ca.actorId || "sistema";
+                const scopesDisplay = ca.scopes || ca.scopesJson || "READ_ONLY";
+                const tsDisplay = ca.createdAt || ca.eventAt;
+                return (
+                  <div
+                    key={ca.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-3.5 text-xs"
+                  >
+                    <div>
+                      <span
+                        className={`mr-2 rounded px-2 py-0.5 font-mono text-[10px] font-bold ${
+                          ca.action === "GRANTED"
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-rose-100 text-rose-800"
+                        }`}
+                      >
+                        {ca.action}
+                      </span>
+                      <strong className="text-[#141726]">
+                        Conexão #{ca.connectionId.slice(0, 10)}
+                      </strong>
+                      <span className="ml-2 text-slate-500">
+                        • Escopos: {scopesDisplay}
+                      </span>
+                    </div>
+                    <div className="font-mono text-[11px] text-slate-500">
+                      Ator: {actorDisplay} •{" "}
+                      {tsDisplay ? new Date(tsDisplay).toLocaleString("pt-BR") : "—"}
+                    </div>
                   </div>
-                  <div className="font-mono text-[11px] text-slate-500">
-                    Ator: {ca.actorUserId} •{" "}
-                    {new Date(ca.createdAt).toLocaleString("pt-BR")}
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

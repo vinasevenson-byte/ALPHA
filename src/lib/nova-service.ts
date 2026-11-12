@@ -1,5 +1,7 @@
 import { prisma } from "./prisma";
 import {
+  addMonthsIso,
+  advancePeriodicityIso,
   allocationBalance,
   buildForecast,
   calculateReserveCapacity,
@@ -9,6 +11,7 @@ import {
   ForecastEntry,
   monthlyContribution,
   remainingInstallment,
+  sanitizeCsvCell,
   splitInstallmentsExact,
 } from "@/domain/planning";
 import {
@@ -27,7 +30,9 @@ import {
   projection as canonicalProjection,
   capacity as canonicalCapacity,
 } from "@/domain/canonical-core";
-import { compute as computeP06, makePassword } from "@/domain/pacote06";
+import { compute as computeP06 } from "@/domain/pacote06";
+
+export { addMonthsIso, advancePeriodicityIso, sanitizeCsvCell };
 
 export interface ApiErrorShape {
   code: string;
@@ -72,10 +77,13 @@ export function addDaysIso(baseIso: string, days: number): string {
   return `${yy}-${mm}-${dd}`;
 }
 
-/**
- * Garante que o usuário padrão e os dois workspaces (Pessoal PF e Empresarial PJ)
- * existam, começando em ESTADO ZERO (R$ 0,00 - Aguardando lançamentos) conforme P01/P02/P03/P04.
- */
+function diffDaysAbs(isoA: string, isoB: string): number {
+  const a = Date.parse(`${isoA.slice(0, 10)}T00:00:00Z`);
+  const b = Date.parse(`${isoB.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b)) return 9999;
+  return Math.round(Math.abs(a - b) / 86_400_000);
+}
+
 /**
  * Valida acesso RBAC ao workspace.
  */
@@ -122,16 +130,27 @@ export async function authorizeWorkspaceAccess(
 }
 
 /**
- * Calcula todos os indicadores consolidados (P01 + P02 + P03 + P04), saldos por conta,
- * fluxo de caixa projetado, capacidade conservadora de reserva, carteira de investimentos,
- * índice de saúde financeira ponderado, qualidade dos dados e conexões/importações.
+ * Calcula todos os indicadores consolidados (P01–P11), saldos por conta,
+ * fluxo de caixa projetado (incluindo recorrências ativas), capacidade conservadora de reserva,
+ * carteira de investimentos, índice de saúde financeira ponderado, qualidade dos dados,
+ * conexões/importações com auto-match e demonstrativo gerencial PF/PJ.
  */
 export async function getWorkspaceFullState(params: {
   workspaceId?: string;
+  userId?: string;
   horizonDays?: number;
   scenarioKind?: "BASE" | "CONSERVATIVE" | "OPTIMISTIC";
 }) {
   const workspaces = await prisma.workspace.findMany({
+    where: params.userId
+      ? {
+          memberships: {
+            some: { userId: params.userId, status: "ACTIVE" },
+          },
+        }
+      : params.workspaceId
+      ? { id: params.workspaceId }
+      : undefined,
     orderBy: { type: "desc" }, // PERSONAL then BUSINESS
   });
 
@@ -175,6 +194,12 @@ export async function getWorkspaceFullState(params: {
     });
   }
 
+  const novaSessionCounter = (
+    prisma as unknown as {
+      novaSession?: { count: (args: unknown) => Promise<number> };
+    }
+  ).novaSession;
+
   const [
     memberships,
     accounts,
@@ -211,7 +236,7 @@ export async function getWorkspaceFullState(params: {
       orderBy: { createdAt: "asc" },
     }),
     prisma.category.findMany({
-      where: { workspaceId: wsId },
+      where: { workspaceId: wsId, archivedAt: null },
       orderBy: { name: "asc" },
     }),
     prisma.counterparty.findMany({
@@ -264,7 +289,7 @@ export async function getWorkspaceFullState(params: {
     prisma.auditEvent.findMany({
       where: { workspaceId: wsId },
       orderBy: { timestamp: "desc" },
-      take: 50,
+      take: 60,
     }),
     prisma.novaInvestmentPosition.findMany({
       where: { workspaceId: wsId },
@@ -301,12 +326,41 @@ export async function getWorkspaceFullState(params: {
     }),
     prisma.audit.count({ where: { workspaceId: wsId } }),
     prisma.idempotencyKey.count({ where: { workspaceId: wsId } }),
-    prisma.session.count({ where: { expiresAt: { gt: new Date() } } }),
+    novaSessionCounter
+      ? novaSessionCounter.count({
+          where: {
+            revokedAt: null,
+            expiresAt: { gt: new Date() },
+            ...(params.userId ? { userId: params.userId } : {}),
+          },
+        })
+      : prisma.session.count({ where: { expiresAt: { gt: new Date() } } }),
   ]);
 
   const today = todayIso();
+  const categoryById = new Map(categories.map((c) => [c.id, c]));
+  const counterpartyById = new Map(counterparties.map((cp) => [cp.id, cp]));
+  const accountById = new Map(accounts.map((a) => [a.id, a]));
 
-  // Normaliza transações para interoperabilidade P01–P05 + P06 (serializando BigInt)
+  // Sanitiza memberships (nunca vaza passwordHash para o cliente!)
+  const safeMemberships = memberships.map((m) => ({
+    id: m.id,
+    workspaceId: m.workspaceId,
+    userId: m.userId,
+    role: m.role,
+    status: m.status,
+    createdAt: m.createdAt,
+    user: m.user
+      ? {
+          id: m.user.id,
+          name: m.user.name,
+          email: m.user.email,
+          status: m.user.status,
+        }
+      : undefined,
+  }));
+
+  // Normaliza transações para interoperabilidade P01–P05 + P06 (serializando BigInt + categoria/contraparte)
   const normalizedTransactions = transactions.map((t) => {
     const derivedAmountCents =
       t.amountCents > 0 ? t.amountCents : Math.abs(Number(t.signedCents));
@@ -314,25 +368,33 @@ export async function getWorkspaceFullState(params: {
       t.signedCents !== 0n
         ? t.signedCents
         : t.kind === "EXPENSE" || t.kind === "TRANSFER_OUT"
-          ? -BigInt(derivedAmountCents)
-          : BigInt(derivedAmountCents);
+        ? -BigInt(derivedAmountCents)
+        : BigInt(derivedAmountCents);
     const isoDate =
       t.occurredOn && t.occurredOn !== "2026-01-01"
         ? t.occurredOn
         : t.date instanceof Date
-          ? t.date.toISOString().slice(0, 10)
-          : today;
+        ? t.date.toISOString().slice(0, 10)
+        : today;
     const isoDue =
       t.dueOn ||
       (t.dueDate instanceof Date
         ? t.dueDate.toISOString().slice(0, 10)
         : isoDate);
+    const cat = t.categoryId ? categoryById.get(t.categoryId) : undefined;
+    const cp = t.counterpartyId
+      ? counterpartyById.get(t.counterpartyId)
+      : undefined;
+
     return {
       ...t,
       amountCents: derivedAmountCents,
       signedCents: derivedSignedBig.toString(),
       occurredOn: isoDate,
       dueOn: isoDue,
+      categoryName: cat?.name ?? null,
+      isEssential: cat ? cat.isEssential : true,
+      counterpartyName: cp?.name ?? null,
       account: t.account
         ? {
             ...t.account,
@@ -400,6 +462,15 @@ export async function getWorkspaceFullState(params: {
 
   for (const ob of obligations) {
     const totalCount = ob.installments.length;
+    const cpName =
+      ob.counterparty ||
+      (ob.counterpartyId ? counterpartyById.get(ob.counterpartyId)?.name : "") ||
+      "";
+    const catName =
+      ob.categoryName ||
+      (ob.categoryId ? categoryById.get(ob.categoryId)?.name : "") ||
+      "Geral";
+
     for (const inst of ob.installments) {
       const paidCents = inst.settlements.reduce(
         (s, st) => s + st.amountCents,
@@ -427,8 +498,8 @@ export async function getWorkspaceFullState(params: {
         obligationId: ob.id,
         obligationTitle: ob.title,
         direction: ob.direction as "PAYABLE" | "RECEIVABLE",
-        categoryName: ob.categoryName || "Geral",
-        counterparty: ob.counterparty || "",
+        categoryName: catName,
+        counterparty: cpName,
         costCenter: ob.costCenter || "",
         confidence: ob.confidence,
         number: inst.number,
@@ -463,7 +534,56 @@ export async function getWorkspaceFullState(params: {
       (t.kind === "INCOME" || t.kind === "EXPENSE")
   );
 
-  // 4. Série Diária de Fluxo de Caixa Projetado (buildForecast P02)
+  // 3B. Motor de Recorrências (Pacote 10): projeta ocorrências ativas no horizonte sem duplicar as já materializadas
+  const horizonEndIso = addDaysIso(today, Math.max(horizonDays, 95));
+  const materializedIdemKeys = new Set(
+    transactions.map((t) => t.idempotencyKey)
+  );
+
+  const enrichedRecurrences = recurrences.map((r) => ({
+    ...r,
+    accountName: accountById.get(r.accountId)?.name || "Conta",
+    categoryName:
+      (r.categoryId && categoryById.get(r.categoryId)?.name) || "Geral",
+  }));
+
+  const projectedRecurrenceOccurrences: Array<{
+    id: string;
+    recurrenceId: string;
+    title: string;
+    kind: "INCOME" | "EXPENSE";
+    categoryName: string;
+    amountCents: number;
+    date: string;
+  }> = [];
+
+  for (const r of enrichedRecurrences) {
+    if (!r.active || r.amountCents <= 0) continue;
+    let cursor = r.nextDate;
+    let guard = 0;
+    while (cursor <= horizonEndIso && guard < 366) {
+      guard++;
+      if (r.endDate && cursor > r.endDate) break;
+      const idemKey = `rec_${r.id}_${cursor}`;
+      if (!materializedIdemKeys.has(idemKey)) {
+        const effectiveDate = cursor < today ? today : cursor;
+        projectedRecurrenceOccurrences.push({
+          id: idemKey,
+          recurrenceId: r.id,
+          title: r.title,
+          kind: r.kind === "INCOME" ? "INCOME" : "EXPENSE",
+          categoryName: r.categoryName,
+          amountCents: r.amountCents,
+          date: effectiveDate,
+        });
+      }
+      const next = advancePeriodicityIso(cursor, r.periodicity);
+      if (next <= cursor) break;
+      cursor = next;
+    }
+  }
+
+  // 4. Série Diária de Fluxo de Caixa Projetado (buildForecast P02 + Recorrências P10)
   const activeScenario =
     scenarios.find((s) => s.kind === scenarioKind) ?? {
       kind: "BASE",
@@ -514,6 +634,24 @@ export async function getWorkspaceFullState(params: {
       if (!matchesDay) continue;
       if (ptx.kind === "INCOME") inboundCents += BigInt(ptx.amountCents);
       else if (ptx.kind === "EXPENSE") outboundCents += BigInt(ptx.amountCents);
+    }
+
+    for (const recOcc of projectedRecurrenceOccurrences) {
+      if (recOcc.date !== dateStr) continue;
+      if (recOcc.date > addDaysIso(today, horizonDays)) continue;
+      if (recOcc.kind === "INCOME") {
+        inboundCents += BigInt(recOcc.amountCents);
+      } else {
+        let out = BigInt(recOcc.amountCents);
+        if (
+          scenarioKind === "CONSERVATIVE" &&
+          activeScenario.contingencyBufferPct > 0
+        ) {
+          out =
+            (out * BigInt(100 + activeScenario.contingencyBufferPct)) / 100n;
+        }
+        outboundCents += out;
+      }
     }
 
     if (i === Math.min(15, horizonDays)) {
@@ -623,7 +761,7 @@ export async function getWorkspaceFullState(params: {
       )}`
     );
     explanations.push(
-      "Compromissos em aberto e vencidos descontados uma única vez na projeção diária."
+      "Compromissos em aberto, recorrências ativas e vencidos descontados uma única vez na projeção diária."
     );
     if (activeWorkspace.safetyBufferCents === 0) {
       confidence = "MEDIUM";
@@ -640,7 +778,9 @@ export async function getWorkspaceFullState(params: {
         (t) =>
           t.status === "SETTLED" &&
           t.kind === "EXPENSE" &&
-          (t.categoryId === b.categoryId ||
+          ((b.categoryId && t.categoryId === b.categoryId) ||
+            (t.categoryName &&
+              t.categoryName.toLowerCase() === b.categoryName.toLowerCase()) ||
             t.description.toLowerCase().includes(b.categoryName.toLowerCase()))
       )
       .reduce((s, t) => s + t.amountCents, 0);
@@ -739,6 +879,66 @@ export async function getWorkspaceFullState(params: {
     today
   );
 
+  // 9B. Concentração Real por Categoria de Despesa (substitui valor fixo 42%)
+  const expenseCategoryMap = new Map<
+    string,
+    {
+      categoryName: string;
+      isEssential: boolean;
+      realizedCents: number;
+      projectedCents: number;
+    }
+  >();
+
+  for (const tx of normalizedTransactions) {
+    if (tx.kind !== "EXPENSE" || tx.status === "CANCELED") continue;
+    const label = tx.categoryName || "Despesas Gerais";
+    const cur = expenseCategoryMap.get(label) ?? {
+      categoryName: label,
+      isEssential: tx.isEssential,
+      realizedCents: 0,
+      projectedCents: 0,
+    };
+    if (tx.status === "SETTLED") cur.realizedCents += tx.amountCents;
+    else if (tx.status === "PENDING") cur.projectedCents += tx.amountCents;
+    expenseCategoryMap.set(label, cur);
+  }
+
+  for (const inst of enrichedInstallments) {
+    if (
+      inst.direction !== "PAYABLE" ||
+      inst.derivedStatus === "PAID" ||
+      inst.derivedStatus === "CANCELED"
+    ) {
+      continue;
+    }
+    const label = inst.categoryName || "Geral";
+    const matchedCat = categories.find(
+      (c) => c.name.toLowerCase() === label.toLowerCase()
+    );
+    const cur = expenseCategoryMap.get(label) ?? {
+      categoryName: label,
+      isEssential: matchedCat ? matchedCat.isEssential : true,
+      realizedCents: 0,
+      projectedCents: 0,
+    };
+    cur.projectedCents += inst.outstandingCents;
+    expenseCategoryMap.set(label, cur);
+  }
+
+  const totalMonitoredExpenseCents = [...expenseCategoryMap.values()].reduce(
+    (s, item) => s + item.realizedCents + item.projectedCents,
+    0
+  );
+  const maxCategoryExpenseCents = [...expenseCategoryMap.values()].reduce(
+    (max, item) => Math.max(max, item.realizedCents + item.projectedCents),
+    0
+  );
+  const topExpenseCategorySharePct =
+    totalMonitoredExpenseCents > 0
+      ? Math.round((maxCategoryExpenseCents / totalMonitoredExpenseCents) * 100)
+      : 0;
+
   // 10. Motor de Inteligência e Qualidade de Dados (Pacote 04)
   const unreconciledCount = importedTransactions.filter(
     (it) => it.state === "STAGED"
@@ -747,7 +947,7 @@ export async function getWorkspaceFullState(params: {
     (p) => p.quoteStatus === "STALE"
   ).length;
   const p04Quality = qualityStatus({
-    missingAccounts: accounts.length === 0 ? 1 : 0,
+    missingAccounts: accounts.filter((a) => a.status === "ACTIVE").length === 0 ? 1 : 0,
     unreconciledTransactions: unreconciledCount,
     staleMarketPrices: staleQuotesCount,
   });
@@ -776,7 +976,7 @@ export async function getWorkspaceFullState(params: {
     exceededBudgetsCount,
     totalBudgetsCount: computedBudgets.length,
     allocatedReservesCents: totalAllocatedReservesCents,
-    topExpenseCategorySharePct: 42,
+    topExpenseCategorySharePct,
   });
 
   const savingsRateRatio = savingsRate(
@@ -784,21 +984,40 @@ export async function getWorkspaceFullState(params: {
     consolidatedTotals.settledExpenseCents
   );
 
-  // Projeção P04 (projectCash) sobre eventos pendentes
-  const p04Events = enrichedInstallments
-    .filter(
-      (i) => i.derivedStatus !== "PAID" && i.derivedStatus !== "CANCELED"
-    )
-    .map((i) => ({
-      id: `inst_${i.id}`,
-      date: i.dueOn < today ? today : i.dueOn,
-      amountCents: i.outstandingCents,
+  // Projeção P04 (projectCash) sobre eventos pendentes + recorrências no horizonte
+  const p04Events = [
+    ...enrichedInstallments
+      .filter(
+        (i) => i.derivedStatus !== "PAID" && i.derivedStatus !== "CANCELED"
+      )
+      .map((i) => ({
+        id: `inst_${i.id}`,
+        date: i.dueOn < today ? today : i.dueOn,
+        amountCents: i.outstandingCents,
+        status: "PENDING" as const,
+        kind:
+          i.direction === "RECEIVABLE"
+            ? ("INCOME" as const)
+            : ("EXPENSE" as const),
+      })),
+    ...standalonePendingTxs.map((ptx) => ({
+      id: `ptx_${ptx.id}`,
+      date: (ptx.dueOn || ptx.occurredOn) < today ? today : ptx.dueOn || ptx.occurredOn,
+      amountCents: ptx.amountCents,
       status: "PENDING" as const,
       kind:
-        i.direction === "RECEIVABLE"
-          ? ("INCOME" as const)
-          : ("EXPENSE" as const),
-    }));
+        ptx.kind === "INCOME" ? ("INCOME" as const) : ("EXPENSE" as const),
+    })),
+    ...projectedRecurrenceOccurrences
+      .filter((r) => r.date <= addDaysIso(today, horizonDays))
+      .map((r) => ({
+        id: r.id,
+        date: r.date,
+        amountCents: r.amountCents,
+        status: "PENDING" as const,
+        kind: r.kind,
+      })),
+  ];
 
   const p04Projection = projectCash(
     eligibleBalanceCents,
@@ -807,7 +1026,263 @@ export async function getWorkspaceFullState(params: {
     p04Events
   );
 
-  const p04RiskInsights = detectCashRisk(p04Projection, "ledger+installments");
+  const p04RiskInsights = detectCashRisk(
+    p04Projection,
+    "ledger+installments+recurrences"
+  );
+
+  // 10B. Normalização de Conexões, Lotes, Conciliação (com Auto-Match) e Insights P04
+  const normalizedConnections = financialConnections.map((c) => ({
+    ...c,
+    providerId: c.providerCode,
+    scopes:
+      c.consentScopes || "ACCOUNTS_READ, BALANCES_READ, TRANSACTIONS_READ",
+    consentExpiresAt: c.consentExpiresAt
+      ? c.consentExpiresAt.toISOString()
+      : null,
+    lastSyncedAt: c.lastSyncAt ? c.lastSyncAt.toISOString() : null,
+  }));
+
+  const normalizedImportBatches = importBatches.map((b) => {
+    const batchTxs = importedTransactions.filter(
+      (t) => t.importBatchId === b.id
+    );
+    const batchAudit = auditEvents.find(
+      (ae) => ae.entityId === b.id && ae.action === "import.batch_staged"
+    );
+    let meta: {
+      stagedCount?: number;
+      duplicateCount?: number;
+      errorCount?: number;
+    } = {};
+    if (batchAudit?.metadataJson) {
+      try {
+        meta = JSON.parse(batchAudit.metadataJson);
+      } catch {
+        // ignore
+      }
+    }
+    const importedRows = meta.stagedCount ?? batchTxs.length;
+    const duplicateRows = meta.duplicateCount ?? 0;
+    const errorRows = meta.errorCount ?? 0;
+    return {
+      ...b,
+      sourceKind: b.sourceType,
+      fileHash: b.inputChecksum,
+      totalRows: importedRows + duplicateRows + errorRows,
+      importedRows,
+      duplicateRows,
+      errorRows,
+      createdAt: b.createdAt.toISOString(),
+    };
+  });
+
+  const normalizedImportedTransactions = importedTransactions.map((it) => {
+    const reconciliationState: "STAGED" | "RECONCILED" | "IGNORED" =
+      it.state === "IMPORTED"
+        ? "RECONCILED"
+        : it.state === "IGNORED"
+        ? "IGNORED"
+        : "STAGED";
+
+    let suggestedMatch: {
+      kind: "TRANSACTION" | "INSTALLMENT";
+      id: string;
+      title: string;
+      dueOn: string;
+      amountCents: number;
+    } | null = null;
+
+    if (reconciliationState === "STAGED" && it.direction !== "SELF_TRANSFER") {
+      const wantIncome = it.direction === "CREDIT";
+      const matchTx = standalonePendingTxs.find(
+        (ptx) =>
+          (wantIncome ? ptx.kind === "INCOME" : ptx.kind === "EXPENSE") &&
+          ptx.amountCents === it.amountCents &&
+          diffDaysAbs(ptx.dueOn || ptx.occurredOn, it.postedOn) <= 5
+      );
+      if (matchTx) {
+        suggestedMatch = {
+          kind: "TRANSACTION",
+          id: matchTx.id,
+          title: matchTx.description,
+          dueOn: matchTx.dueOn || matchTx.occurredOn,
+          amountCents: matchTx.amountCents,
+        };
+      } else {
+        const matchInst = enrichedInstallments.find(
+          (inst) =>
+            inst.derivedStatus !== "PAID" &&
+            inst.derivedStatus !== "CANCELED" &&
+            (wantIncome
+              ? inst.direction === "RECEIVABLE"
+              : inst.direction === "PAYABLE") &&
+            inst.outstandingCents === it.amountCents &&
+            diffDaysAbs(inst.dueOn, it.postedOn) <= 5
+        );
+        if (matchInst) {
+          suggestedMatch = {
+            kind: "INSTALLMENT",
+            id: matchInst.id,
+            title: `${matchInst.obligationTitle} (${matchInst.number}/${matchInst.totalInstallments})`,
+            dueOn: matchInst.dueOn,
+            amountCents: matchInst.outstandingCents,
+          };
+        }
+      }
+    }
+
+    return {
+      ...it,
+      occurredAt: it.postedOn,
+      dedupeKey: it.rawHash,
+      reconciliationState,
+      reconciledLedgerTxId: it.matchedLedgerEntryId,
+      suggestedMatch,
+    };
+  });
+
+  const normalizedStoredInsights = storedInsights.map((ins) => {
+    const mappedSeverity: "CRITICAL" | "WARNING" | "INFO" =
+      ins.severity === "CRITICAL" || ins.severity === "HIGH"
+        ? "CRITICAL"
+        : ins.severity === "WARNING" || ins.severity === "MEDIUM"
+        ? "WARNING"
+        : "INFO";
+    const mappedStatus: "ACTIVE" | "ACKNOWLEDGED" | "DISMISSED" | "RESOLVED" =
+      ins.state === "NEW" || ins.state === "ACTIVE"
+        ? "ACTIVE"
+        : ins.state === "READ" || ins.state === "ACKNOWLEDGED"
+        ? "ACKNOWLEDGED"
+        : ins.state === "DISMISSED"
+        ? "DISMISSED"
+        : "RESOLVED";
+
+    let evObj: Record<string, string> = {};
+    try {
+      const parsed = JSON.parse(ins.evidenceJson);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (item && typeof item === "object") {
+            const k = String(item.label || item.metric || "evidencia");
+            evObj[k] = String(item.value ?? "");
+          }
+        }
+      } else if (parsed && typeof parsed === "object") {
+        evObj = parsed as Record<string, string>;
+      }
+    } catch {
+      evObj = {};
+    }
+
+    return {
+      ...ins,
+      severity: mappedSeverity,
+      status: mappedStatus,
+      summary: ins.explanation,
+      explanationJson: JSON.stringify({
+        cause: ins.explanation,
+        action:
+          ins.code.includes("RESERVE")
+            ? "Avalie alocar parte da margem livre em um Cofre ou aplicação D+0."
+            : "Revise seus lançamentos e vencimentos no horizonte ativo.",
+      }),
+      evidenceJson: JSON.stringify(evObj),
+      originModule: "Intelligence P04",
+      ruleVersion: ins.sourceVersion || "4.0.0",
+      detectedAt: ins.createdAt.toISOString(),
+    };
+  });
+
+  const existingInsightCodes = new Set(
+    normalizedStoredInsights.map((i) => i.code)
+  );
+  const dynamicInsights: Array<{
+    id: string;
+    code: string;
+    title: string;
+    severity: "INFO" | "WARNING" | "CRITICAL";
+    status: "ACTIVE" | "ACKNOWLEDGED" | "DISMISSED" | "RESOLVED";
+    state: string;
+    explanation: string;
+    summary: string;
+    explanationJson: string;
+    evidenceJson: string;
+    originModule: string;
+    ruleVersion: string;
+    sourceVersion: string;
+    detectedAt: string;
+  }> = [];
+
+  for (const rIns of p04RiskInsights) {
+    if (existingInsightCodes.has(rIns.code)) continue;
+    dynamicInsights.push({
+      id: `dyn_ins_${rIns.code}`,
+      code: rIns.code,
+      title: rIns.title,
+      severity: rIns.priority === "HIGH" ? "CRITICAL" : "WARNING",
+      status: "ACTIVE",
+      state: "NEW",
+      explanation: rIns.explanation,
+      summary: rIns.explanation,
+      explanationJson: JSON.stringify({
+        cause: rIns.explanation,
+        action:
+          "Antecipe recebíveis, reprograme saídas ou utilize liquidez imediata para cobrir o vale de caixa.",
+      }),
+      evidenceJson: JSON.stringify({
+        "Menor Saldo Projetado": `R$ ${centsToDecimalString(
+          p04Projection.minimumCents
+        )}`,
+      }),
+      originModule: "Forecast P04",
+      ruleVersion: "4.0.0",
+      sourceVersion: "4.0.0",
+      detectedAt: new Date().toISOString(),
+    });
+  }
+
+  if (
+    hasSufficientData &&
+    headroomCents > 0 &&
+    !existingInsightCodes.has("RESERVE_HEADROOM_AVAILABLE")
+  ) {
+    const summaryText = `Há margem segura de R$ ${centsToDecimalString(
+      headroomCents
+    )} para alocar em reservas ou investimentos D+0 preservando sua margem de segurança.`;
+    dynamicInsights.push({
+      id: "dyn_ins_headroom",
+      code: "RESERVE_HEADROOM_AVAILABLE",
+      title: "Capacidade Segura de Reserva Identificada",
+      severity: "INFO",
+      status: "ACTIVE",
+      state: "NEW",
+      explanation: summaryText,
+      summary: summaryText,
+      explanationJson: JSON.stringify({
+        cause: summaryText,
+        action:
+          "Acesse Reservas e Cofres ou o Comparador de Investimentos para direcionar o excedente.",
+      }),
+      evidenceJson: JSON.stringify({
+        "Margem Segura": `R$ ${centsToDecimalString(headroomCents)}`,
+        "Menor Saldo Projetado": `R$ ${centsToDecimalString(
+          minForecastBalanceCents
+        )}`,
+      }),
+      originModule: "ReserveCapacity P02+P04",
+      ruleVersion: "4.0.0",
+      sourceVersion: "4.0.0",
+      detectedAt: new Date().toISOString(),
+    });
+  }
+
+  const normalizedConsentAudits = consentAudits.map((ca) => ({
+    ...ca,
+    actorUserId: ca.actorId,
+    scopes: ca.scopesJson,
+    createdAt: ca.eventAt.toISOString(),
+  }));
 
   // 11. Alertas Dinâmicos + Persistidos (Central de Alertas P02 + P04)
   const dynamicAlerts: Array<{
@@ -903,6 +1378,273 @@ export async function getWorkspaceFullState(params: {
     )
     .reduce((s, i) => s + i.outstandingCents, 0);
 
+  // 12. Demonstrativo Gerencial PF / DRE Simplificado PJ & Calendário Preditivo 21d (Pacote 11)
+  const monthPeriods: string[] = [];
+  for (let offset = -5; offset <= 3; offset++) {
+    monthPeriods.push(addMonthsIso(`${today.slice(0, 7)}-01`, offset).slice(0, 7));
+  }
+
+  const monthlySummary = monthPeriods.map((period) => {
+    let realizedIncomeCents = 0;
+    let realizedExpenseCents = 0;
+    let projectedIncomeCents = 0;
+    let projectedExpenseCents = 0;
+
+    for (const tx of normalizedTransactions) {
+      if (tx.status === "CANCELED") continue;
+      if (tx.status === "SETTLED") {
+        const refMonth = (tx.settledOn || tx.occurredOn).slice(0, 7);
+        if (refMonth !== period) continue;
+        if (tx.kind === "INCOME") realizedIncomeCents += tx.amountCents;
+        else if (tx.kind === "EXPENSE") realizedExpenseCents += tx.amountCents;
+      } else if (tx.status === "PENDING") {
+        const refMonth = (tx.dueOn || tx.occurredOn).slice(0, 7);
+        if (refMonth !== period) continue;
+        if (tx.kind === "INCOME") projectedIncomeCents += tx.amountCents;
+        else if (tx.kind === "EXPENSE") projectedExpenseCents += tx.amountCents;
+      }
+    }
+
+    for (const inst of enrichedInstallments) {
+      if (inst.derivedStatus === "PAID" || inst.derivedStatus === "CANCELED") {
+        continue;
+      }
+      if (inst.dueOn.slice(0, 7) !== period) continue;
+      if (inst.direction === "RECEIVABLE") {
+        projectedIncomeCents += inst.outstandingCents;
+      } else {
+        projectedExpenseCents += inst.outstandingCents;
+      }
+    }
+
+    for (const recOcc of projectedRecurrenceOccurrences) {
+      if (recOcc.date.slice(0, 7) !== period) continue;
+      if (recOcc.kind === "INCOME") projectedIncomeCents += recOcc.amountCents;
+      else projectedExpenseCents += recOcc.amountCents;
+    }
+
+    return {
+      period,
+      realizedIncomeCents,
+      realizedExpenseCents,
+      projectedIncomeCents,
+      projectedExpenseCents,
+      netRealizedCents: realizedIncomeCents - realizedExpenseCents,
+      netProjectedCents:
+        realizedIncomeCents +
+        projectedIncomeCents -
+        (realizedExpenseCents + projectedExpenseCents),
+    };
+  });
+
+  const categoryBreakdown = [...expenseCategoryMap.values()]
+    .map((item) => {
+      const totalCents = item.realizedCents + item.projectedCents;
+      return {
+        ...item,
+        totalCents,
+        sharePct:
+          totalMonitoredExpenseCents > 0
+            ? Math.round((totalCents / totalMonitoredExpenseCents) * 100)
+            : 0,
+      };
+    })
+    .sort((a, b) => b.totalCents - a.totalCents);
+
+  const counterpartyStatsMap = new Map<
+    string,
+    {
+      name: string;
+      document: string | null;
+      costCenter: string | null;
+      totalExpenseCents: number;
+      totalIncomeCents: number;
+      txCount: number;
+    }
+  >();
+
+  for (const cp of counterparties) {
+    counterpartyStatsMap.set(cp.name.toLowerCase(), {
+      name: cp.name,
+      document: cp.document,
+      costCenter: cp.costCenter,
+      totalExpenseCents: 0,
+      totalIncomeCents: 0,
+      txCount: 0,
+    });
+  }
+
+  for (const tx of normalizedTransactions) {
+    if (tx.status === "CANCELED" || !tx.counterpartyName) continue;
+    const key = tx.counterpartyName.toLowerCase();
+    const entry = counterpartyStatsMap.get(key) ?? {
+      name: tx.counterpartyName,
+      document: null,
+      costCenter: tx.costCenter,
+      totalExpenseCents: 0,
+      totalIncomeCents: 0,
+      txCount: 0,
+    };
+    if (tx.kind === "EXPENSE") entry.totalExpenseCents += tx.amountCents;
+    else if (tx.kind === "INCOME") entry.totalIncomeCents += tx.amountCents;
+    entry.txCount += 1;
+    counterpartyStatsMap.set(key, entry);
+  }
+
+  for (const inst of enrichedInstallments) {
+    if (inst.derivedStatus === "CANCELED" || !inst.counterparty) continue;
+    const key = inst.counterparty.toLowerCase();
+    const entry = counterpartyStatsMap.get(key) ?? {
+      name: inst.counterparty,
+      document: null,
+      costCenter: inst.costCenter || null,
+      totalExpenseCents: 0,
+      totalIncomeCents: 0,
+      txCount: 0,
+    };
+    if (inst.derivedStatus !== "PAID") {
+      if (inst.direction === "PAYABLE") {
+        entry.totalExpenseCents += inst.outstandingCents;
+      } else {
+        entry.totalIncomeCents += inst.outstandingCents;
+      }
+      entry.txCount += 1;
+    }
+    counterpartyStatsMap.set(key, entry);
+  }
+
+  const counterpartyBreakdown = [...counterpartyStatsMap.values()].sort(
+    (a, b) =>
+      b.totalExpenseCents +
+      b.totalIncomeCents -
+      (a.totalExpenseCents + a.totalIncomeCents)
+  );
+
+  // Calendário Financeiro Preditivo de 21 dias (alimenta AssistantAndCalendarView)
+  const calendarDaysCount = 21;
+  let runningCalBalance = eligibleBalanceCents;
+  const predictiveCalendar21d = Array.from(
+    { length: calendarDaysCount },
+    (_, idx) => {
+      const dateIso = addDaysIso(today, idx);
+      const events: Array<{
+        id: string;
+        title: string;
+        description: string;
+        kind: "INCOME" | "EXPENSE";
+        type: string;
+        amountCents: number;
+        status: "SETTLED" | "PREDICTED";
+      }> = [];
+
+      // Eventos já liquidados exatamente nesta data (informativos; não somam novamente no saldo!)
+      for (const tx of normalizedTransactions) {
+        if (tx.status === "SETTLED" && tx.occurredOn === dateIso) {
+          if (tx.kind === "INCOME" || tx.kind === "EXPENSE") {
+            events.push({
+              id: tx.id,
+              title: tx.description,
+              description: `${tx.description} (Realizado)`,
+              kind: tx.kind,
+              type: tx.kind,
+              amountCents: tx.amountCents,
+              status: "SETTLED",
+            });
+          }
+        }
+      }
+
+      let inflowCents = 0;
+      let outflowCents = 0;
+
+      for (const inst of enrichedInstallments) {
+        if (
+          inst.derivedStatus === "PAID" ||
+          inst.derivedStatus === "CANCELED"
+        ) {
+          continue;
+        }
+        const matches =
+          inst.dueOn === dateIso || (idx === 0 && inst.dueOn < today);
+        if (!matches) continue;
+        const evKind = inst.direction === "RECEIVABLE" ? "INCOME" : "EXPENSE";
+        const label = `${inst.obligationTitle} (${inst.number}/${inst.totalInstallments})`;
+        events.push({
+          id: inst.id,
+          title: label,
+          description: label,
+          kind: evKind,
+          type: evKind,
+          amountCents: inst.outstandingCents,
+          status: "PREDICTED",
+        });
+        if (evKind === "INCOME") inflowCents += inst.outstandingCents;
+        else outflowCents += inst.outstandingCents;
+      }
+
+      for (const ptx of standalonePendingTxs) {
+        const target = ptx.dueOn || ptx.occurredOn;
+        const matches = target === dateIso || (idx === 0 && target < today);
+        if (!matches) continue;
+        const evKind = ptx.kind === "INCOME" ? "INCOME" : "EXPENSE";
+        events.push({
+          id: ptx.id,
+          title: ptx.description,
+          description: ptx.description,
+          kind: evKind,
+          type: evKind,
+          amountCents: ptx.amountCents,
+          status: "PREDICTED",
+        });
+        if (evKind === "INCOME") inflowCents += ptx.amountCents;
+        else outflowCents += ptx.amountCents;
+      }
+
+      for (const recOcc of projectedRecurrenceOccurrences) {
+        if (recOcc.date !== dateIso) continue;
+        const label = `${recOcc.title} (Recorrência)`;
+        events.push({
+          id: recOcc.id,
+          title: label,
+          description: label,
+          kind: recOcc.kind,
+          type: recOcc.kind,
+          amountCents: recOcc.amountCents,
+          status: "PREDICTED",
+        });
+        if (recOcc.kind === "INCOME") inflowCents += recOcc.amountCents;
+        else outflowCents += recOcc.amountCents;
+      }
+
+      runningCalBalance += inflowCents - outflowCents;
+      const riskState: "SAFE" | "BELOW_SAFETY" | "NEGATIVE" =
+        runningCalBalance < 0
+          ? "NEGATIVE"
+          : runningCalBalance < activeWorkspace.safetyBufferCents
+          ? "BELOW_SAFETY"
+          : "SAFE";
+
+      const [, mm, dd] = dateIso.split("-");
+      return {
+        dateIso,
+        dayLabel: `${dd}/${mm}`,
+        inflowCents,
+        outflowCents,
+        projectedBalanceCents: runningCalBalance,
+        riskState,
+        events,
+      };
+    }
+  );
+
+  // Despesa essencial mensal estimada para alimentar ReserveCapacityInput
+  const essentialMonthlyExpensesCents = Math.max(
+    categoryBreakdown
+      .filter((c) => c.isEssential)
+      .reduce((s, c) => s + c.realizedCents, 0),
+    Math.round(consolidatedTotals.settledExpenseCents * 0.7)
+  );
+
   // Núcleo Financeiro Canônico P05 + P06 (BigInt exato e conciliação declarada)
   const p05Accounts = computedAccounts.map((a) => ({
     id: a.id,
@@ -990,12 +1732,12 @@ export async function getWorkspaceFullState(params: {
   return {
     workspaces,
     activeWorkspace,
-    memberships,
+    memberships: safeMemberships,
     accounts: computedAccounts,
     categories,
     counterparties,
     transactions: normalizedTransactions,
-    recurrences,
+    recurrences: enrichedRecurrences,
     budgets: computedBudgets,
     obligations,
     installments: enrichedInstallments,
@@ -1006,11 +1748,19 @@ export async function getWorkspaceFullState(params: {
     alerts: dynamicAlerts,
     auditEvents,
     investmentPositions,
-    financialConnections,
-    importBatches,
-    importedTransactions,
-    financialInsights: storedInsights,
-    consentAudits,
+    financialConnections: normalizedConnections,
+    importBatches: normalizedImportBatches,
+    importedTransactions: normalizedImportedTransactions,
+    financialInsights: [...normalizedStoredInsights, ...dynamicInsights],
+    consentAudits: normalizedConsentAudits,
+    analytics: {
+      monthlySummary,
+      categoryBreakdown,
+      counterpartyBreakdown,
+      predictiveCalendar21d,
+      essentialMonthlyExpensesCents,
+      topExpenseCategorySharePct,
+    },
     p05Canonical: {
       version: "5.0.0",
       reconciled: isWorkspaceReconciled,
@@ -1046,7 +1796,8 @@ export async function getWorkspaceFullState(params: {
       totalAllocatedReservesCents,
       freeCashCents,
       headroomCents,
-      openPayablesCents: openPayablesCents + consolidatedTotals.pendingExpenseCents,
+      openPayablesCents:
+        openPayablesCents + consolidatedTotals.pendingExpenseCents,
       openReceivablesCents:
         openReceivablesCents + consolidatedTotals.pendingIncomeCents,
       portfolioCostCents: totalPortfolioCostCents,
@@ -1070,6 +1821,9 @@ export async function getWorkspaceFullState(params: {
         NOVA_P4_ALERTS: true,
         NOVA_P4_AI_ASSISTANT: true,
         NOVA_P4_OPEN_FINANCE: false,
+        openFinanceEnabled: false,
+        aiAssistantEnabled: true,
+        externalMarketDataEnabled: true,
       },
     },
     reserveCapacityReport: {

@@ -1,8 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getWorkspaceFullState } from "@/lib/nova-service";
-import { requireSession, requireWorkspace, requireSameOrigin, AuthError } from "@/lib/nova-auth";
+import { getWorkspaceFullState, NovaDomainError } from "@/lib/nova-service";
+import {
+  requireSession,
+  requireWorkspace,
+  requireSameOrigin,
+  AuthError,
+} from "@/lib/nova-auth";
 import { centsToDecimalString, formatBRL } from "@/domain/planning";
 import { answerReadonlyAssistant } from "@/domain/intelligence";
+
+function toJsonSafe<T>(obj: T): T {
+  return JSON.parse(
+    JSON.stringify(obj, (_key, value) =>
+      typeof value === "bigint" ? value.toString() : value
+    )
+  );
+}
 
 export async function GET(
   req: NextRequest,
@@ -19,7 +32,11 @@ export async function GET(
       const workspaceId = slug[1];
       await requireWorkspace(session.userId, workspaceId, "VIEW");
       const horizonDays = Number(searchParams.get("horizonDays") ?? 180);
-      const state = await getWorkspaceFullState({ workspaceId, horizonDays });
+      const state = await getWorkspaceFullState({
+        workspaceId,
+        userId: session.userId,
+        horizonDays,
+      });
 
       const subRoute = slug.slice(2).join("/");
 
@@ -27,7 +44,8 @@ export async function GET(
         return NextResponse.json(
           {
             asOf: new Date().toISOString(),
-            quality: state.p04Intelligence.quality.eligibleForAutomatedSuggestions
+            quality: state.p04Intelligence.quality
+              .eligibleForAutomatedSuggestions
               ? "VERIFIED"
               : state.accounts.length === 0
               ? "UNAVAILABLE"
@@ -47,7 +65,10 @@ export async function GET(
 
       if (subRoute === "insights") {
         return NextResponse.json(
-          { items: state.financialInsights, total: state.financialInsights.length },
+          {
+            items: state.financialInsights,
+            total: state.financialInsights.length,
+          },
           { headers: { "X-Request-Id": requestId } }
         );
       }
@@ -82,7 +103,9 @@ export async function GET(
               state.kpis.minForecastBalanceCents
             ),
             settledIncome: centsToDecimalString(state.kpis.settledIncomeCents),
-            settledExpense: centsToDecimalString(state.kpis.settledExpenseCents),
+            settledExpense: centsToDecimalString(
+              state.kpis.settledExpenseCents
+            ),
             projectedEndBalance: centsToDecimalString(
               state.kpis.projectedEndBalanceCents
             ),
@@ -116,22 +139,22 @@ export async function GET(
         );
       }
 
-      return NextResponse.json(state, {
+      return NextResponse.json(toJsonSafe(state), {
         headers: { "X-Request-Id": requestId },
       });
     }
 
     return NextResponse.json(
       {
-        service: "NOVA Financial API v1 (Pacotes 01 + 02 + 03 + 04)",
-        version: "4.0.0",
+        service: "NOVA Financial API v1 (Pacotes 01–11)",
+        version: "9.0.0",
         status: "healthy",
         requestId,
       },
       { headers: { "X-Request-Id": requestId } }
     );
   } catch (err) {
-    if (err instanceof AuthError) {
+    if (err instanceof AuthError || err instanceof NovaDomainError) {
       return NextResponse.json(
         { code: err.code, message: err.message, details: {}, requestId },
         { status: err.status }
@@ -167,7 +190,10 @@ export async function POST(
       if (subRoute === "assistant/query") {
         const body = await req.json();
         const question = String(body.question || "");
-        const state = await getWorkspaceFullState({ workspaceId });
+        const state = await getWorkspaceFullState({
+          workspaceId,
+          userId: session.userId,
+        });
 
         const isZeroState =
           state.accounts.length === 0 &&
@@ -210,7 +236,7 @@ export async function POST(
       { status: 404 }
     );
   } catch (err) {
-    if (err instanceof AuthError) {
+    if (err instanceof AuthError || err instanceof NovaDomainError) {
       return NextResponse.json(
         { code: err.code, message: err.message, requestId },
         { status: err.status }

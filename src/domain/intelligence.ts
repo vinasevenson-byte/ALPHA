@@ -137,6 +137,7 @@ export function savingsRate(
 
 export type Evidence = {
   metric: string;
+  label?: string;
   asOf: string;
   source: string;
   status: "VERIFIED" | "ESTIMATED" | "STALE" | "UNAVAILABLE";
@@ -166,6 +167,7 @@ export function detectCashRisk(
       evidence: [
         {
           metric: "minimumProjectedCashCents",
+          label: "Menor saldo projetado (centavos)",
           asOf: projection.asOf,
           source,
           status: "ESTIMATED",
@@ -180,13 +182,41 @@ export function qualityStatus(inputs: {
   missingAccounts: number;
   unreconciledTransactions: number;
   staleMarketPrices: number;
-}) {
+}): {
+  eligibleForAutomatedSuggestions: boolean;
+  issues: typeof inputs;
+  status: "COMPLETE" | "PARTIAL" | "INSUFFICIENT_DATA" | "STALE";
+  reasons: string[];
+} {
   for (const x of Object.values(inputs)) assertAmount(x);
+  const reasons: string[] = [];
+  let status: "COMPLETE" | "PARTIAL" | "INSUFFICIENT_DATA" | "STALE" =
+    "COMPLETE";
+
+  if (inputs.missingAccounts > 0) {
+    status = "INSUFFICIENT_DATA";
+    reasons.push("Nenhuma conta financeira ativa cadastrada");
+  }
+  if (inputs.unreconciledTransactions > 0) {
+    if (status === "COMPLETE") status = "PARTIAL";
+    reasons.push(
+      `${inputs.unreconciledTransactions} item(ns) externo(s) aguardando conciliação`
+    );
+  }
+  if (inputs.staleMarketPrices > 0) {
+    if (status === "COMPLETE") status = "STALE";
+    reasons.push(
+      `${inputs.staleMarketPrices} posição(ões) com cotação defasada`
+    );
+  }
+
   return {
     eligibleForAutomatedSuggestions: Object.values(inputs).every(
       (x) => x === 0
     ),
     issues: inputs,
+    status,
+    reasons,
   };
 }
 
@@ -200,9 +230,27 @@ export function qualityStatus(inputs: {
  * - Concentração: 10%
  * Sem dados suficientes (hasSufficientData === false), retorna null.
  */
+export interface HealthScoreDimension {
+  key: "LIQUIDITY" | "PUNCTUALITY" | "BUDGET" | "RESERVE" | "CONCENTRATION";
+  label: string;
+  weightPct: number;
+  score: number;
+  weightedPoints: number;
+  status: "GOOD" | "WARNING" | "CRITICAL";
+  rationale: string;
+}
+
 export interface HealthScoreBreakdown {
   totalScore: number | null;
   status: "EXCELLENT" | "GOOD" | "ATTENTION" | "INSUFFICIENT_DATA";
+  band:
+    | "CRITICAL"
+    | "ATTENTION"
+    | "STABLE"
+    | "HEALTHY"
+    | "EXCELLENT"
+    | "INSUFFICIENT_DATA";
+  summary: string;
   version: string;
   components: {
     liquidityScore: number; // 0..100 (peso 30%)
@@ -211,6 +259,7 @@ export interface HealthScoreBreakdown {
     reserveScore: number; // 0..100 (peso 15%)
     concentrationScore: number; // 0..100 (peso 10%)
   } | null;
+  dimensions: HealthScoreDimension[];
   evidence: Evidence[];
 }
 
@@ -231,11 +280,16 @@ export function calculateFinancialHealthIndex(input: {
     return {
       totalScore: null,
       status: "INSUFFICIENT_DATA",
+      band: "INSUFFICIENT_DATA",
+      summary:
+        "Sem base suficiente no ambiente (Estado Zero). Cadastre contas ou lançamentos para apurar o índice.",
       version: "p04-health-v1.0",
       components: null,
+      dimensions: [],
       evidence: [
         {
           metric: "hasSufficientData",
+          label: "Base mínima disponível",
           asOf: input.asOf,
           source: "ledger+planning",
           status: "UNAVAILABLE",
@@ -311,9 +365,98 @@ export function calculateFinancialHealthIndex(input: {
       ? "GOOD"
       : "ATTENTION";
 
+  const band: HealthScoreBreakdown["band"] =
+    totalScore >= 85
+      ? "EXCELLENT"
+      : totalScore >= 70
+      ? "HEALTHY"
+      : totalScore >= 55
+      ? "STABLE"
+      : totalScore >= 40
+      ? "ATTENTION"
+      : "CRITICAL";
+
+  const dimStatus = (s: number): "GOOD" | "WARNING" | "CRITICAL" =>
+    s >= 75 ? "GOOD" : s >= 50 ? "WARNING" : "CRITICAL";
+
+  const dimensions: HealthScoreDimension[] = [
+    {
+      key: "LIQUIDITY",
+      label: "Liquidez e Fluxo Projetado",
+      weightPct: 30,
+      score: liquidityScore,
+      weightedPoints: Math.round(liquidityScore * 0.3 * 10) / 10,
+      status: dimStatus(liquidityScore),
+      rationale:
+        input.minForecastBalanceCents < 0
+          ? "Projeção aponta risco de saldo negativo no horizonte."
+          : input.minForecastBalanceCents >= input.safetyBufferCents
+          ? "Menor saldo projetado preserva integralmente a margem de segurança."
+          : "Saldo positivo, porém abaixo da margem de segurança configurada.",
+    },
+    {
+      key: "PUNCTUALITY",
+      label: "Pontualidade de Compromissos",
+      weightPct: 25,
+      score: punctualityScore,
+      weightedPoints: Math.round(punctualityScore * 0.25 * 10) / 10,
+      status: dimStatus(punctualityScore),
+      rationale:
+        input.overdueInstallmentsCount === 0
+          ? "Zero parcelas vencidas em aberto."
+          : `${input.overdueInstallmentsCount} parcela(s) vencida(s) aguardando regularização.`,
+    },
+    {
+      key: "BUDGET",
+      label: "Aderência Orçamentária",
+      weightPct: 20,
+      score: budgetScore,
+      weightedPoints: Math.round(budgetScore * 0.2 * 10) / 10,
+      status: dimStatus(budgetScore),
+      rationale:
+        input.totalBudgetsCount === 0
+          ? "Nenhum teto de orçamento cadastrado ainda (nota neutra)."
+          : input.exceededBudgetsCount === 0
+          ? `Todos os ${input.totalBudgetsCount} orçamentos estão dentro do limite.`
+          : `${input.exceededBudgetsCount} de ${input.totalBudgetsCount} orçamento(s) acima do teto.`,
+    },
+    {
+      key: "RESERVE",
+      label: "Cobertura de Reservas e Cofres",
+      weightPct: 15,
+      score: reserveScore,
+      weightedPoints: Math.round(reserveScore * 0.15 * 10) / 10,
+      status: dimStatus(reserveScore),
+      rationale:
+        input.allocatedReservesCents === 0
+          ? "Nenhuma reserva virtual constituída nos cofres."
+          : input.allocatedReservesCents >= input.safetyBufferCents
+          ? "Reservas constituídas cobrem ou superam a margem de segurança."
+          : "Reserva em formação nos cofres virtuais.",
+    },
+    {
+      key: "CONCENTRATION",
+      label: "Diversificação de Saídas",
+      weightPct: 10,
+      score: concentrationScore,
+      weightedPoints: Math.round(concentrationScore * 0.1 * 10) / 10,
+      status: dimStatus(concentrationScore),
+      rationale: `Maior categoria concentra ${input.topExpenseCategorySharePct}% das despesas monitoradas.`,
+    },
+  ];
+
+  const summary =
+    band === "EXCELLENT" || band === "HEALTHY"
+      ? "Estrutura financeira saudável, com liquidez positiva e boa cobertura."
+      : band === "STABLE"
+      ? "Equilíbrio operacional moderado; revise reservas ou margens."
+      : "Atenção prioritária requerida em liquidez, atrasos ou orçamentos.";
+
   return {
     totalScore,
     status,
+    band,
+    summary,
     version: "p04-health-v1.0",
     components: {
       liquidityScore,
@@ -322,9 +465,11 @@ export function calculateFinancialHealthIndex(input: {
       reserveScore,
       concentrationScore,
     },
+    dimensions,
     evidence: [
       {
         metric: "eligibleBalanceCents",
+        label: "Saldo Elegível (centavos)",
         asOf: input.asOf,
         source: "ledger-p01",
         status: "VERIFIED",
@@ -332,6 +477,7 @@ export function calculateFinancialHealthIndex(input: {
       },
       {
         metric: "minForecastBalanceCents",
+        label: "Menor Saldo Projetado (centavos)",
         asOf: input.asOf,
         source: "forecast-p02-p04",
         status: "ESTIMATED",
@@ -339,6 +485,7 @@ export function calculateFinancialHealthIndex(input: {
       },
       {
         metric: "allocatedReservesCents",
+        label: "Reservas Alocadas (centavos)",
         asOf: input.asOf,
         source: "reserves-p02",
         status: "VERIFIED",
@@ -358,6 +505,8 @@ export interface AssistantAnswer {
   question: string;
   answer: string;
   blockedAction: boolean;
+  readOnlyGuardrail: boolean;
+  limitations: string[];
   period: string;
   asOf: string;
   source: string;
@@ -405,6 +554,10 @@ export function answerReadonlyAssistant(
       answer:
         "Bloqueio de Governança NOVA (P04): O Assistente opera exclusivamente em modo somente leitura e educacional. Ele não executa pagamentos, transferências, aplicações ou resgates automáticos, nem realiza consultoria individualizada de valores mobiliários. Você pode utilizar os módulos de Movimentações, Compromissos ou o Comparador de Aplicações para avaliar e registrar suas decisões manualmente.",
       blockedAction: true,
+      readOnlyGuardrail: true,
+      limitations: [
+        "Ação operacional bloqueada por política de segurança Read-Only.",
+      ],
       period: `Referência ${context.asOf}`,
       asOf: context.asOf,
       source: "Guardrail de Governança P04 (Read-Only Policy)",
@@ -414,6 +567,7 @@ export function answerReadonlyAssistant(
       evidence: [
         {
           metric: "policyMode",
+          label: "Política de Governança",
           asOf: context.asOf,
           source: "p04-guardrail",
           status: "VERIFIED",
@@ -426,8 +580,12 @@ export function answerReadonlyAssistant(
   if (context.isZeroState) {
     return {
       question,
-      answer: `O ambiente "${context.workspaceName}" encontra-se sem dados financeiros cadastrados (saldo em R$ 0,00). Para que eu possa responder com precisão determinística sobre despesas, reservas ou fluxo de caixa, cadastre sua primeira conta bancária, importe um extrato CSV ou carregue o cenário de homologação.`,
+      answer: `O ambiente "${context.workspaceName}" encontra-se sem dados financeiros cadastrados (saldo em R$ 0,00). Para que eu possa responder com precisão determinística sobre despesas, reservas ou fluxo de caixa, cadastre sua primeira conta bancária ou importe um extrato CSV/OFX.`,
       blockedAction: false,
+      readOnlyGuardrail: true,
+      limitations: [
+        "Ambiente em estado inicial (R$ 0,00) sem lançamentos persistidos.",
+      ],
       period: `Até ${context.asOf}`,
       asOf: context.asOf,
       source: "Ledger P01 + Motor P04",
@@ -437,10 +595,11 @@ export function answerReadonlyAssistant(
       evidence: [
         {
           metric: "isZeroState",
+          label: "Estado Inicial (Zero Dados)",
           asOf: context.asOf,
           source: "ledger-p01",
           status: "UNAVAILABLE",
-          value: "true",
+          value: "Sim (R$ 0,00)",
         },
       ],
     };
@@ -452,6 +611,12 @@ export function answerReadonlyAssistant(
       question,
       answer: `Com base no motor determinístico (P02/P04), sua capacidade segura adicional de reserva hoje é de ${context.headroomFormatted}. O cálculo considera seu saldo disponível de ${context.eligibleBalanceFormatted}, o menor saldo projetado no horizonte (${context.minForecastFormatted}) e preserva integralmente sua margem de segurança configurada (${context.safetyBufferFormatted}).`,
       blockedAction: false,
+      readOnlyGuardrail: true,
+      limitations: [
+        context.qualityEligible
+          ? "Base conciliada; projeção sujeita apenas a novos compromissos futuros."
+          : "Existem itens pendentes de conciliação que podem alterar o saldo disponível.",
+      ],
       period: `Horizonte ativo a partir de ${context.asOf}`,
       asOf: context.asOf,
       source: "Motor ReserveCapacity (P02 + P04)",
@@ -466,6 +631,7 @@ export function answerReadonlyAssistant(
       evidence: [
         {
           metric: "reserveCapacity",
+          label: "Capacidade Segura de Reserva",
           asOf: context.asOf,
           source: "planning-p02-p04",
           status: "ESTIMATED",
@@ -473,6 +639,7 @@ export function answerReadonlyAssistant(
         },
         {
           metric: "minimumProjectedCash",
+          label: "Menor Saldo Projetado",
           asOf: context.asOf,
           source: "forecast-p04",
           status: "ESTIMATED",
@@ -488,6 +655,10 @@ export function answerReadonlyAssistant(
       question,
       answer: `Você possui atualmente ${context.openPayablesCount} parcela(s)/compromisso(s) em aberto, totalizando ${context.openPayablesFormatted}. Esses compromissos já estão descontados da sua projeção de caixa para evitar dupla contagem quando forem baixados.`,
       blockedAction: false,
+      readOnlyGuardrail: true,
+      limitations: [
+        "Considera exclusivamente obrigações e parcelas ativas cadastradas no workspace.",
+      ],
       period: `Posição em ${context.asOf}`,
       asOf: context.asOf,
       source: "Módulo de Obrigações e Parcelas (P02)",
@@ -497,6 +668,7 @@ export function answerReadonlyAssistant(
       evidence: [
         {
           metric: "openPayablesTotal",
+          label: "Total a Pagar em Aberto",
           asOf: context.asOf,
           source: "obligations-p02",
           status: "VERIFIED",
@@ -512,6 +684,10 @@ export function answerReadonlyAssistant(
       question,
       answer: `No período apurado, as despesas liquidadas somam ${context.settledExpenseFormatted} frente a receitas liquidadas de ${context.settledIncomeFormatted}. Transferências entre contas próprias e alocações em cofres virtuais foram isoladas e não inflam suas despesas.`,
       blockedAction: false,
+      readOnlyGuardrail: true,
+      limitations: [
+        "Apuração baseada nos lançamentos com status SETTLED no Ledger P01.",
+      ],
       period: `Acumulado até ${context.asOf}`,
       asOf: context.asOf,
       source: "Ledger Contábil P01",
@@ -521,6 +697,7 @@ export function answerReadonlyAssistant(
       evidence: [
         {
           metric: "settledExpense",
+          label: "Despesas Liquidadas",
           asOf: context.asOf,
           source: "ledger-p01",
           status: "VERIFIED",
@@ -528,6 +705,7 @@ export function answerReadonlyAssistant(
         },
         {
           metric: "settledIncome",
+          label: "Receitas Liquidadas",
           asOf: context.asOf,
           source: "ledger-p01",
           status: "VERIFIED",
@@ -542,6 +720,10 @@ export function answerReadonlyAssistant(
     question,
     answer: `Resumo determinístico do ambiente "${context.workspaceName}": Saldo disponível em contas de ${context.eligibleBalanceFormatted}, carteira de investimentos em ${context.portfolioGrossFormatted}, saldo projetado ao fim do horizonte de ${context.projectedEndFormatted} (com ponto mínimo em ${context.minForecastFormatted}) e capacidade segura de reserva de ${context.headroomFormatted}.`,
     blockedAction: false,
+    readOnlyGuardrail: true,
+    limitations: [
+      "Projeção determinística condicional aos lançamentos, recorrências e parcelas registradas.",
+    ],
     period: `Horizonte ativo a partir de ${context.asOf}`,
     asOf: context.asOf,
     source: "Núcleo Integrado NOVA (P01 + P02 + P03 + P04)",
@@ -553,6 +735,7 @@ export function answerReadonlyAssistant(
     evidence: [
       {
         metric: "eligibleBalance",
+        label: "Saldo Elegível em Contas",
         asOf: context.asOf,
         source: "ledger-p01",
         status: "VERIFIED",
@@ -560,6 +743,7 @@ export function answerReadonlyAssistant(
       },
       {
         metric: "projectedClosingBalance",
+        label: "Saldo Projetado no Fechamento",
         asOf: context.asOf,
         source: "intelligence-p04",
         status: "ESTIMATED",

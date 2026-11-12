@@ -48,13 +48,24 @@ export async function requireSession(req: NextRequest) {
   if (!session || session.revokedAt || session.expiresAt <= new Date() || session.user.status !== 'ACTIVE') throw new AuthError('SESSION_EXPIRED');
   return { userId: session.userId, name: session.user.name, email: session.user.email, sessionId: session.id };
 }
-export async function issueSession(userId: string) {
+export async function issueSession(userId: string, meta?: { userAgent?: string | null; ip?: string | null }) {
   const token = makeToken();
-  await prisma.novaSession.create({ data: { userId, tokenHash: tokenHash(token), expiresAt: new Date(Date.now() + SESSION_TTL) } });
+  await prisma.novaSession.create({
+    data: {
+      userId,
+      tokenHash: tokenHash(token),
+      expiresAt: new Date(Date.now() + SESSION_TTL),
+      userAgent: meta?.userAgent ? String(meta.userAgent).slice(0, 250) : null,
+      ipHash: meta?.ip ? sha256(meta.ip) : null,
+    },
+  });
   return token;
 }
 export function sessionCookie(token: string) {
   return { name: SESSION_COOKIE, value: token, httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' as const, path: '/', maxAge: SESSION_TTL / 1000 };
+}
+export function clearSessionCookie() {
+  return { name: SESSION_COOKIE, value: '', httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' as const, path: '/', maxAge: 0 };
 }
 export async function requireWorkspace(userId: string, workspaceId: string, level: 'VIEW' | 'EDIT' | 'ADMIN' = 'VIEW') {
   if (!workspaceId) throw new AuthError('WORKSPACE_REQUIRED', 422, 'Informe o ambiente financeiro.');
@@ -78,17 +89,33 @@ export function authFailure(error: unknown) {
   return Response.json({ code: 'INTERNAL_ERROR', message: 'Falha na autenticação.' }, { status: 500 });
 }
 
-// Throttling persistente por identidade, não baseado em memória da função serverless.
+// Throttling atômico e persistente por identidade (corrigido off-by-one e janela concorrente).
 export async function checkThrottle(key: string, limit = 8, periodMs = 15 * 60_000) {
   const hashed = sha256(key);
   const now = new Date();
-  const windowStart = new Date(Date.now() - periodMs);
-  await prisma.novaAuthThrottle.upsert({
-    where: { key: hashed },
-    create: { key: hashed, attempts: 1, windowStart: now },
-    update: {},
+  const windowCutoff = new Date(now.getTime() - periodMs);
+
+  const attempts = await prisma.$transaction(async (tx) => {
+    const existing = await tx.novaAuthThrottle.findUnique({ where: { key: hashed } });
+    if (!existing || existing.windowStart < windowCutoff) {
+      const reset = await tx.novaAuthThrottle.upsert({
+        where: { key: hashed },
+        create: { key: hashed, attempts: 1, windowStart: now, windowEndsAt: new Date(now.getTime() + periodMs) },
+        update: { attempts: 1, windowStart: now, windowEndsAt: new Date(now.getTime() + periodMs), blockedUntil: null },
+      });
+      return reset.attempts;
+    }
+    const updated = await tx.novaAuthThrottle.update({
+      where: { key: hashed },
+      data: {
+        attempts: { increment: 1 },
+        blockedUntil: existing.attempts + 1 > limit ? new Date(now.getTime() + periodMs) : existing.blockedUntil,
+      },
+    });
+    return updated.attempts;
   });
-  await prisma.novaAuthThrottle.updateMany({ where: { key: hashed, windowStart: { lt: windowStart } }, data: { attempts: 0, windowStart: now } });
-  const record = await prisma.novaAuthThrottle.update({ where: { key: hashed }, data: { attempts: { increment: 1 } } });
-  if (record.attempts > limit) throw new AuthError('TOO_MANY_ATTEMPTS', 429, 'Muitas tentativas. Tente novamente mais tarde.');
+
+  if (attempts > limit) {
+    throw new AuthError('TOO_MANY_ATTEMPTS', 429, 'Muitas tentativas. Tente novamente mais tarde.');
+  }
 }

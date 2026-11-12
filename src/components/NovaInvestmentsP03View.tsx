@@ -17,6 +17,9 @@ import {
   PieChart,
   Shield,
   FileBarChart2,
+  RefreshCw,
+  ArrowDownToLine,
+  Trash2,
 } from "lucide-react";
 import {
   brazilPfFixedIncomeTax,
@@ -24,7 +27,10 @@ import {
   projectLiquidity,
   taxableFixedIncomeRedemption,
 } from "@/domain/investments";
-import { formatBRL } from "@/domain/planning";
+import { centsToDecimalString, formatBRL } from "@/domain/planning";
+import { DEFAULT_MACRO_RATES } from "@/lib/financial-engine";
+import { InvestmentComparatorView } from "@/components/InvestmentComparatorView";
+import { ReserveSimulatorCard } from "@/components/ReserveSimulatorCard";
 
 export type P03TabKey =
   | "visao-geral"
@@ -168,6 +174,7 @@ interface Props {
   workspaceName: string;
   activeSubTab?: P03TabKey;
   positions?: PositionRow[];
+  accounts?: Array<{ id: string; name: string; status?: string }>;
   onPositionsChange?: (next: PositionRow[]) => void;
   onPersistAction?: (
     payload: Record<string, unknown>,
@@ -184,6 +191,7 @@ export function NovaInvestmentsP03View({
   workspaceName,
   activeSubTab = "visao-geral",
   positions: controlledPositions,
+  accounts = [],
   onPositionsChange,
   onPersistAction,
   workspaceHeadroomCents = 0,
@@ -196,6 +204,11 @@ export function NovaInvestmentsP03View({
   useEffect(() => {
     setSubTab(activeSubTab);
   }, [activeSubTab]);
+
+  const activeAccounts = useMemo(
+    () => accounts.filter((a) => !a.status || a.status === "ACTIVE"),
+    [accounts]
+  );
 
   // Se o usuário ainda não possuir investimentos cadastrados,
   // o sistema apresenta a carteira vazia (R$ 0,00), sem números fictícios.
@@ -210,7 +223,7 @@ export function NovaInvestmentsP03View({
     }
   };
 
-  // Form de nova posição / operação (BUY/SELL)
+  // Form de nova posição / operação (BUY)
   const [newName, setNewName] = useState("");
   const [newKind, setNewKind] = useState<PositionRow["kind"]>("TESOURO_SELIC");
   const [newInst, setNewInst] = useState("Tesouro Direto / Itaú");
@@ -219,16 +232,27 @@ export function NovaInvestmentsP03View({
   const [newGrossReais, setNewGrossReais] = useState(5420);
   const [newDays, setNewDays] = useState(365);
 
-  // Estado do Simulador Patrimonial P03 (Calibrado para o exemplo oficial:
-  // Capital inicial R$ 5.000 + Aporte mensal R$ 500 + Prazo 10 anos + Taxa 9% a.a. =>
-  // Patrimônio bruto estimado: R$ 106.696,15 | Total investido: R$ 65.000,00 | Rendimento bruto: R$ 41.696,15)
+  // Estado inline para Atualizar Cotação ou Resgatar Posição para Conta Bancária
+  const [editingQuotePosId, setEditingQuotePosId] = useState<string | null>(null);
+  const [quoteDecimalInput, setQuoteDecimalInput] = useState<string>("0.00");
+  const [redeemingPos, setRedeemingPos] = useState<PositionRow | null>(null);
+  const [redeemGrossDecimal, setRedeemGrossDecimal] = useState<string>("0.00");
+  const [redeemAccountId, setRedeemAccountId] = useState<string>("");
+
+  useEffect(() => {
+    if (activeAccounts.length > 0 && !redeemAccountId) {
+      setRedeemAccountId(activeAccounts[0].id);
+    }
+  }, [activeAccounts, redeemAccountId]);
+
+  // Estado do Simulador Patrimonial P03
   const [simPrincipal, setSimPrincipal] = useState<number>(5000);
   const [simMonthly, setSimMonthly] = useState<number>(500);
   const [simYears, setSimYears] = useState<number>(10);
   const [simAnnualRatePct, setSimAnnualRatePct] = useState<number>(9);
   const [simInflationPct, setSimInflationPct] = useState<number>(4.5);
 
-  // Estado do Comparador Inteligente P03
+  // Estado do Comparador Rápido P03
   const [compAmount, setCompAmount] = useState<number>(10000);
   const [compDays, setCompDays] = useState<number>(365);
 
@@ -249,17 +273,6 @@ export function NovaInvestmentsP03View({
     [positions, workspaceType]
   );
 
-  const loadSamplePortfolioP03 = async () => {
-    if (onPersistAction) {
-      await onPersistAction(
-        { action: "LOAD_P03_FIXTURE" },
-        "Carteira de Homologação (Pacote 03) persistida no banco de dados."
-      );
-      return;
-    }
-    updatePositions(SAMPLE_P03_POSITIONS);
-  };
-
   const clearPortfolioP03 = async () => {
     if (onPersistAction) {
       await onPersistAction(
@@ -279,14 +292,15 @@ export function NovaInvestmentsP03View({
           <div>
             <div className="flex items-center gap-2">
               <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#6C5CE7]">
-                Central de Investimentos • Pacote 03
+                Central de Investimentos • Pacote 03 + P10
               </span>
               <span className="text-xs text-slate-500">
-                {workspaceName} ({workspaceType === "BUSINESS" ? "Empresarial PJ" : "Pessoal PF"})
+                {workspaceName} (
+                {workspaceType === "BUSINESS" ? "Empresarial PJ" : "Pessoal PF"})
               </span>
             </div>
             <h2 className="mt-1 text-lg font-extrabold text-[#1E1B39]">
-              Gestão de Carteira, Rentabilidade e Simulador Patrimonial
+              Gestão de Carteira, Resgate Líquido Pós-IR e Simulador Patrimonial
             </h2>
           </div>
 
@@ -304,19 +318,20 @@ export function NovaInvestmentsP03View({
               </button>
             )}
 
-            {positions.length === 0 ? (
-              <button
-                onClick={loadSamplePortfolioP03}
-                className="rounded-xl bg-[#6C5CE7] px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#5849BE]"
-              >
-                Carregar Carteira de Homologação (P03)
-              </button>
-            ) : (
+            <button
+              onClick={() => setSubTab("operacoes")}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#5849BE]"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Nova Posição
+            </button>
+
+            {positions.length > 0 && (
               <button
                 onClick={clearPortfolioP03}
                 className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
               >
-                Zerar Carteira (R$ 0,00)
+                Limpar Carteira
               </button>
             )}
           </div>
@@ -508,159 +523,167 @@ export function NovaInvestmentsP03View({
       </div>
 
       {/* =====================================================================
-          SIMULADOR PATRIMONIAL (SEÇÃO 4 DO PACOTE 03)
+          SIMULADOR PATRIMONIAL (SEÇÃO 4 DO PACOTE 03 + RESERVE SIMULATOR CARD)
          ===================================================================== */}
       {(subTab === "visao-geral" || subTab === "simulador") && (
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
-            <div>
-              <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#6C5CE7]">
-                Simulador Patrimonial • Prévia Interativa (P03)
-              </span>
-              <h3 className="mt-1 text-base font-extrabold text-[#1E1B39]">
-                Simulação de Crescimento Patrimonial (Juros Compostos e Inflação)
-              </h3>
-            </div>
-            <button
-              onClick={() => {
-                setSimPrincipal(5000);
-                setSimMonthly(500);
-                setSimYears(10);
-                setSimAnnualRatePct(9);
-                setSimInflationPct(4.5);
-              }}
-              className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-1.5 text-xs font-semibold text-[#1E1B39] hover:border-[#6C5CE7]"
-            >
-              Restaurar Exemplo Padrão (10 anos / 9% a.a.)
-            </button>
-          </div>
-
-          <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-12">
-            <div className="space-y-4 text-xs lg:col-span-5">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700">
-                    Capital inicial (R$)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={simPrincipal}
-                    onChange={(e) => setSimPrincipal(Number(e.target.value))}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="font-bold text-slate-700">
-                    Aporte mensal (R$)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={simMonthly}
-                    onChange={(e) => setSimMonthly(Number(e.target.value))}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700">
-                    Prazo (anos)
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={60}
-                    value={simYears}
-                    onChange={(e) => setSimYears(Number(e.target.value))}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="font-bold text-slate-700">
-                    Taxa anual (%)
-                  </label>
-                  <input
-                    type="number"
-                    step={0.25}
-                    value={simAnnualRatePct}
-                    onChange={(e) => setSimAnnualRatePct(Number(e.target.value))}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="font-bold text-slate-700">
-                    Inflação est. (%)
-                  </label>
-                  <input
-                    type="number"
-                    step={0.25}
-                    value={simInflationPct}
-                    onChange={(e) => setSimInflationPct(Number(e.target.value))}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col justify-between rounded-2xl bg-gradient-to-br from-[#6C5CE7] to-[#4834D4] p-6 text-white shadow-md lg:col-span-7">
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-violet-200">
-                  Patrimônio bruto estimado ao fim do período ({simYears} anos)
+                <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 text-[10px] font-bold uppercase text-[#6C5CE7]">
+                  Simulador Patrimonial • Prévia Interativa (P03)
                 </span>
-                <div className="mt-1 font-mono text-3xl font-black tabular-nums text-white sm:text-4xl">
-                  {formatBRL(Math.round(simResult.amount * 100))}
+                <h3 className="mt-1 text-base font-extrabold text-[#1E1B39]">
+                  Simulação de Crescimento Patrimonial (Juros Compostos e Inflação)
+                </h3>
+              </div>
+              <button
+                onClick={() => {
+                  setSimPrincipal(5000);
+                  setSimMonthly(500);
+                  setSimYears(10);
+                  setSimAnnualRatePct(9);
+                  setSimInflationPct(4.5);
+                }}
+                className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-1.5 text-xs font-semibold text-[#1E1B39] hover:border-[#6C5CE7]"
+              >
+                Restaurar Exemplo Padrão (10 anos / 9% a.a.)
+              </button>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-12">
+              <div className="space-y-4 text-xs lg:col-span-5">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-700">
+                      Capital inicial (R$)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={simPrincipal}
+                      onChange={(e) => setSimPrincipal(Number(e.target.value))}
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-700">
+                      Aporte mensal (R$)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={simMonthly}
+                      onChange={(e) => setSimMonthly(Number(e.target.value))}
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
+                    />
+                  </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl bg-white/15 p-3 backdrop-blur-sm">
-                    <span className="text-[11px] text-violet-100">
-                      Total investido
-                    </span>
-                    <div className="mt-1 font-mono text-base font-bold tabular-nums text-white">
-                      {formatBRL(Math.round(simResult.contributions * 100))}
-                    </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-700">
+                      Prazo (anos)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={simYears}
+                      onChange={(e) => setSimYears(Number(e.target.value))}
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
+                    />
                   </div>
-                  <div className="rounded-xl bg-white/20 p-3 backdrop-blur-sm">
-                    <span className="text-[11px] font-semibold text-emerald-200">
-                      Rendimento bruto
-                    </span>
-                    <div className="mt-1 font-mono text-base font-bold tabular-nums text-emerald-200">
-                      {formatBRL(Math.round(simResult.earnings * 100))}
-                    </div>
+                  <div>
+                    <label className="font-bold text-slate-700">
+                      Taxa anual (%)
+                    </label>
+                    <input
+                      type="number"
+                      step={0.25}
+                      value={simAnnualRatePct}
+                      onChange={(e) => setSimAnnualRatePct(Number(e.target.value))}
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
+                    />
                   </div>
-                  <div className="rounded-xl bg-white/15 p-3 backdrop-blur-sm">
-                    <span className="text-[11px] text-violet-100">
-                      Poder de compra (real)
-                    </span>
-                    <div className="mt-1 font-mono text-base font-bold tabular-nums text-amber-200">
-                      {formatBRL(Math.round(simResult.inflationAdjusted * 100))}
-                    </div>
+                  <div>
+                    <label className="font-bold text-slate-700">
+                      Inflação est. (%)
+                    </label>
+                    <input
+                      type="number"
+                      step={0.25}
+                      value={simInflationPct}
+                      onChange={(e) => setSimInflationPct(Number(e.target.value))}
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
+                    />
                   </div>
                 </div>
               </div>
 
-              <p className="mt-4 text-[11px] text-violet-100/90">
-                Simulação ilustrativa com capitalização mensal e aportes no fim
-                de cada mês, sem tributos ou taxas no valor bruto principal. Não
-                utiliza taxas atuais de mercado e não garante resultados.
-              </p>
+              <div className="flex flex-col justify-between rounded-2xl bg-gradient-to-br from-[#6C5CE7] to-[#4834D4] p-6 text-white shadow-md lg:col-span-7">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-violet-200">
+                    Patrimônio bruto estimado ao fim do período ({simYears} anos)
+                  </span>
+                  <div className="mt-1 font-mono text-3xl font-black tabular-nums text-white sm:text-4xl">
+                    {formatBRL(Math.round(simResult.amount * 100))}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="rounded-xl bg-white/15 p-3 backdrop-blur-sm">
+                      <span className="text-[11px] text-violet-100">
+                        Total investido
+                      </span>
+                      <div className="mt-1 font-mono text-base font-bold tabular-nums text-white">
+                        {formatBRL(Math.round(simResult.contributions * 100))}
+                      </div>
+                    </div>
+                    <div className="rounded-xl bg-white/20 p-3 backdrop-blur-sm">
+                      <span className="text-[11px] font-semibold text-emerald-200">
+                        Rendimento bruto
+                      </span>
+                      <div className="mt-1 font-mono text-base font-bold tabular-nums text-emerald-200">
+                        {formatBRL(Math.round(simResult.earnings * 100))}
+                      </div>
+                    </div>
+                    <div className="rounded-xl bg-white/15 p-3 backdrop-blur-sm">
+                      <span className="text-[11px] text-violet-100">
+                        Poder de compra (real)
+                      </span>
+                      <div className="mt-1 font-mono text-base font-bold tabular-nums text-amber-200">
+                        {formatBRL(Math.round(simResult.inflationAdjusted * 100))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <p className="mt-4 text-[11px] text-violet-100/90">
+                  Simulação ilustrativa com capitalização mensal e aportes no fim
+                  de cada mês, sem tributos ou taxas no valor bruto principal. Não
+                  utiliza taxas atuais de mercado e não garante resultados.
+                </p>
+              </div>
             </div>
           </div>
+
+          {subTab === "simulador" && (
+            <ReserveSimulatorCard
+              reservePotentialCents={Math.max(100000, workspaceHeadroomCents)}
+            />
+          )}
         </div>
       )}
 
       {/* =====================================================================
-          COMPARADOR INTELIGENTE DE APLICAÇÕES (SEÇÃO 3 DO PACOTE 03)
+          COMPARADOR INTELIGENTE DE APLICAÇÕES (SEÇÃO 3 P03 + MOTOR COMPLETO P11)
          ===================================================================== */}
-      {(subTab === "visao-geral" || subTab === "comparador" || subTab === "rentabilidade") && (
+      {(subTab === "visao-geral" || subTab === "rentabilidade") && (
         <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
             <div>
               <h3 className="text-base font-extrabold text-[#1E1B39]">
-                Comparador Inteligente de Investimentos (Bruto vs Líquido Pós-IR)
+                Comparador Rápido de Investimentos (Bruto vs Líquido Pós-IR)
               </h3>
               <p className="text-xs text-slate-500">
                 Avalia rentabilidade líquida descontada da alíquota regressiva PF
@@ -801,8 +824,64 @@ export function NovaInvestmentsP03View({
         </div>
       )}
 
+      {subTab === "comparador" && (
+        <InvestmentComparatorView
+          workspaceType={workspaceType === "BUSINESS" ? "PJ" : "PF"}
+          investments={positions.map((p) => ({
+            id: p.id,
+            name: p.name,
+            assetClass: p.kind,
+            institution: p.institution,
+            investedAmountCents: Math.round(p.costBasisReais * 100),
+            currentAmountCents: Math.round(p.currentGrossReais * 100),
+            indexer: p.indexer,
+            rateDescription: p.rateLabel,
+            annualGrossYieldBps: 1125,
+            liquidity:
+              p.redemptionAvailableAt <= new Date().toISOString().slice(0, 10)
+                ? "D+0 / D+1"
+                : `Carência até ${p.redemptionAvailableAt}`,
+            maturityDate: p.maturityDate,
+            fgcCovered: p.fgcEligible,
+            taxExempt:
+              (p.kind === "LCI" || p.kind === "LCA") &&
+              workspaceType === "PERSONAL",
+            riskLevel: "BAIXO",
+          }))}
+          macroRates={DEFAULT_MACRO_RATES}
+          reservePotentialCents={workspaceHeadroomCents}
+          onAddInvestment={async (payload) => {
+            if (!onPersistAction) return;
+            const mappedKind: PositionRow["kind"] =
+              payload.assetClass === "LCI_LCA"
+                ? "LCI"
+                : payload.assetClass === "FUNDO"
+                ? "FUND"
+                : payload.assetClass === "ETF_ACAO"
+                ? "ETF"
+                : (payload.assetClass as PositionRow["kind"]);
+            await onPersistAction(
+              {
+                action: "CREATE_INVESTMENT_POSITION",
+                symbol: mappedKind,
+                name: payload.name,
+                kind: mappedKind,
+                institution: payload.institution,
+                indexer: payload.indexer,
+                rateLabel: payload.rateDescription,
+                costBasisCents: payload.investedAmountCents,
+                currentGrossCents: payload.currentAmountCents,
+                daysHeld: 365,
+                maturityDate: `${payload.maturityDate}-01`,
+              },
+              "Posição adicionada à carteira consolidada."
+            );
+          }}
+        />
+      )}
+
       {/* =====================================================================
-          MINHA CARTEIRA, OPERAÇÕES, RISCOS, METAS, RELATÓRIOS E FONTES
+          MINHA CARTEIRA, OPERAÇÕES, ATUALIZAÇÃO DE COTAÇÃO E RESGATE P/ CONTA
          ===================================================================== */}
       {(subTab === "visao-geral" ||
         subTab === "carteira" ||
@@ -824,12 +903,19 @@ export function NovaInvestmentsP03View({
                     name: newName,
                     kind: newKind,
                     institution: newInst,
-                    indexer: "CDI/SELIC",
+                    indexer: newKind.includes("IPCA")
+                      ? "IPCA"
+                      : newKind.includes("SELIC")
+                      ? "SELIC"
+                      : "CDI",
                     rateLabel: newRateLabel,
                     costBasisCents: Math.round(newCostReais * 100),
                     currentGrossCents: Math.round(newGrossReais * 100),
                     daysHeld: newDays,
-                    redemptionAvailableAt: "2026-01-01",
+                    redemptionAvailableAt:
+                      newKind === "LCI" || newKind === "LCA"
+                        ? "2027-03-01"
+                        : new Date().toISOString().slice(0, 10),
                     maturityDate: "2028-12-01",
                   },
                   "Posição de investimento registrada no banco de dados."
@@ -850,7 +936,7 @@ export function NovaInvestmentsP03View({
                   costBasisReais: newCostReais,
                   currentGrossReais: newGrossReais,
                   daysHeld: newDays,
-                  redemptionAvailableAt: "2026-01-01",
+                  redemptionAvailableAt: new Date().toISOString().slice(0, 10),
                   maturityDate: "2028-12-01",
                   fgcEligible:
                     newKind === "CDB" || newKind === "LCI" || newKind === "LCA",
@@ -881,10 +967,14 @@ export function NovaInvestmentsP03View({
               <option value="LCI">LCI</option>
               <option value="LCA">LCA</option>
               <option value="TESOURO_IPCA">Tesouro IPCA+</option>
+              <option value="TESOURO_PREFIXADO">Tesouro Prefixado</option>
               <option value="FUND">Fundo</option>
+              <option value="ETF">ETF / Renda Variável</option>
             </select>
             <input
               type="number"
+              min={1}
+              step={0.01}
               placeholder="Custo (R$)"
               value={newCostReais}
               onChange={(e) => setNewCostReais(Number(e.target.value))}
@@ -892,6 +982,8 @@ export function NovaInvestmentsP03View({
             />
             <input
               type="number"
+              min={1}
+              step={0.01}
               placeholder="Valor Bruto Atual (R$)"
               value={newGrossReais}
               onChange={(e) => setNewGrossReais(Number(e.target.value))}
@@ -905,6 +997,94 @@ export function NovaInvestmentsP03View({
               Registrar Posição
             </button>
           </form>
+
+          {/* Modal / Painel de Resgate Integrado p/ Conta Bancária P01 */}
+          {redeemingPos && (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!onPersistAction || !redeemAccountId) return;
+                const ok = await onPersistAction(
+                  {
+                    action: "REDEEM_OR_UPDATE_INVESTMENT",
+                    subAction: "REDEEM",
+                    positionId: redeemingPos.id,
+                    targetAccountId: redeemAccountId,
+                    redeemGrossDecimal,
+                  },
+                  `Resgate de ${redeemingPos.name} creditado na conta bancária (principal como TRANSFER_IN + rendimento líquido pós-IR como INCOME).`
+                );
+                if (ok) setRedeemingPos(null);
+              }}
+              className="rounded-2xl border border-[#6C5CE7]/30 bg-[#EFEFFD]/60 p-5 shadow-sm"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-sm font-extrabold text-[#1E1B39]">
+                    Resgatar Posição para Conta Bancária: {redeemingPos.name}
+                  </h4>
+                  <p className="text-xs text-slate-600">
+                    O principal retorna via <code>TRANSFER_IN</code> (sem inflar
+                    receita) e o rendimento líquido pós-IR regressivo entra como{" "}
+                    <code>INCOME</code> liquidado.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-3 text-xs sm:grid-cols-4">
+                <div>
+                  <label className="font-bold text-slate-700">
+                    Valor Bruto a Resgatar (R$)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={redeemGrossDecimal}
+                    onChange={(e) => setRedeemGrossDecimal(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono font-bold text-[#1E1B39]"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="font-bold text-slate-700">
+                    Conta Bancária de Destino (P01)
+                  </label>
+                  <select
+                    value={redeemAccountId}
+                    onChange={(e) => setRedeemAccountId(e.target.value)}
+                    required
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-semibold text-[#1E1B39]"
+                  >
+                    {activeAccounts.length === 0 ? (
+                      <option value="">
+                        Cadastre uma conta bancária primeiro
+                      </option>
+                    ) : (
+                      activeAccounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+                <div className="flex items-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRedeemingPos(null)}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-600"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={activeAccounts.length === 0}
+                    className="flex-1 rounded-xl bg-[#6C5CE7] px-4 py-2 font-bold text-white disabled:opacity-40"
+                  >
+                    Confirmar Resgate
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
 
           <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
@@ -925,17 +1105,18 @@ export function NovaInvestmentsP03View({
                     <th className="px-4 py-3 text-right">Custo Aporte</th>
                     <th className="px-4 py-3 text-right">Saldo Bruto</th>
                     <th className="px-4 py-3 text-right">Líquido Est.</th>
+                    <th className="px-4 py-3 text-right">Operações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {positions.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={6}
+                        colSpan={7}
                         className="px-4 py-10 text-center text-slate-500"
                       >
                         Nenhum investimento cadastrado. Os indicadores permanecem
-                        em R$ 0,00 até o primeiro registro ou carga de homologação.
+                        em R$ 0,00 até o registro da primeira posição real.
                       </td>
                     </tr>
                   ) : (
@@ -982,10 +1163,100 @@ export function NovaInvestmentsP03View({
                             {formatBRL(Math.round(pos.costBasisReais * 100))}
                           </td>
                           <td className="px-4 py-3 text-right font-mono font-bold tabular-nums text-[#1E1B39]">
-                            {formatBRL(Math.round(pos.currentGrossReais * 100))}
+                            {editingQuotePosId === pos.id ? (
+                              <div className="inline-flex items-center gap-1">
+                                <input
+                                  type="text"
+                                  value={quoteDecimalInput}
+                                  onChange={(e) =>
+                                    setQuoteDecimalInput(e.target.value)
+                                  }
+                                  className="w-24 rounded-lg border border-[#6C5CE7] bg-white px-2 py-1 text-right font-mono text-xs"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (onPersistAction) {
+                                      const ok = await onPersistAction(
+                                        {
+                                          action: "REDEEM_OR_UPDATE_INVESTMENT",
+                                          subAction: "UPDATE_QUOTE",
+                                          positionId: pos.id,
+                                          newGrossDecimal: quoteDecimalInput,
+                                        },
+                                        "Cotação da posição atualizada."
+                                      );
+                                      if (ok) setEditingQuotePosId(null);
+                                    }
+                                  }}
+                                  className="rounded-lg bg-[#6C5CE7] px-2 py-1 text-[10px] font-bold text-white"
+                                >
+                                  OK
+                                </button>
+                              </div>
+                            ) : (
+                              formatBRL(Math.round(pos.currentGrossReais * 100))
+                            )}
                           </td>
                           <td className="px-4 py-3 text-right font-mono font-bold tabular-nums text-[#6C5CE7]">
                             {formatBRL(Math.round(netVal * 100))}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="inline-flex flex-wrap justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingQuotePosId(
+                                    editingQuotePosId === pos.id ? null : pos.id
+                                  );
+                                  setQuoteDecimalInput(
+                                    centsToDecimalString(
+                                      Math.round(pos.currentGrossReais * 100)
+                                    )
+                                  );
+                                }}
+                                title="Atualizar Cotação / Marcação"
+                                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700 hover:border-[#6C5CE7]"
+                              >
+                                <RefreshCw className="h-3 w-3" />
+                                Cotação
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRedeemingPos(pos);
+                                  setRedeemGrossDecimal(
+                                    centsToDecimalString(
+                                      Math.round(pos.currentGrossReais * 100)
+                                    )
+                                  );
+                                }}
+                                title="Resgatar para Conta Bancária"
+                                className="inline-flex items-center gap-1 rounded-lg bg-[#EFEFFD] px-2 py-1 text-[10px] font-bold text-[#6C5CE7] hover:bg-[#6C5CE7] hover:text-white"
+                              >
+                                <ArrowDownToLine className="h-3 w-3" />
+                                Resgatar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (onPersistAction) {
+                                    await onPersistAction(
+                                      {
+                                        action: "REDEEM_OR_UPDATE_INVESTMENT",
+                                        subAction: "DELETE",
+                                        positionId: pos.id,
+                                      },
+                                      "Posição removida da carteira."
+                                    );
+                                  }
+                                }}
+                                title="Remover Posição"
+                                className="inline-flex items-center rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-semibold text-rose-700 hover:bg-rose-100"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );

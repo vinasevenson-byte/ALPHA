@@ -262,3 +262,58 @@ export function formatDateBR(isoDate?: string | null): string {
   if (parts.length !== 3) return isoDate;
   return `${parts[2]}/${parts[1]}/${parts[0]}`;
 }
+
+/**
+ * Soma meses exatos de calendário preservando o dia ou ajustando para o último dia válido do mês destino
+ * (Ex: 2026-01-31 + 1 mês => 2026-02-28).
+ */
+export function addMonthsIso(baseIso: string, months: number): string {
+  const [y, m, d] = baseIso.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return baseIso;
+  const totalMonths = (y * 12 + (m - 1)) + months;
+  const targetYear = Math.floor(totalMonths / 12);
+  const targetMonthIdx = ((totalMonths % 12) + 12) % 12;
+  const maxDayInTargetMonth = new Date(
+    Date.UTC(targetYear, targetMonthIdx + 1, 0)
+  ).getUTCDate();
+  const clampedDay = Math.min(d, maxDayInTargetMonth);
+  return `${String(targetYear).padStart(4, "0")}-${String(
+    targetMonthIdx + 1
+  ).padStart(2, "0")}-${String(clampedDay).padStart(2, "0")}`;
+}
+
+/**
+ * Avança uma data ISO pela periodicidade configurada na recorrência (WEEKLY | MONTHLY | YEARLY).
+ */
+export function advancePeriodicityIso(
+  baseIso: string,
+  periodicity: string
+): string {
+  if (periodicity === "WEEKLY") {
+    const [y, m, d] = baseIso.slice(0, 10).split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d + 7));
+    return dt.toISOString().slice(0, 10);
+  }
+  if (periodicity === "YEARLY") {
+    return addMonthsIso(baseIso, 12);
+  }
+  return addMonthsIso(baseIso, 1);
+}
+
+/**
+ * Sanitiza células CSV contra CSV Formula Injection (=, +, -, @, TAB, CR) e escapa aspas duplas,
+ * preservando números negativos puros (ex.: -250.75) para leitura numérica limpa em planilhas.
+ */
+export function sanitizeCsvCell(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  const raw = value == null ? "" : String(value);
+  const isPureSignedNumber = /^[+-]?\d+(\.\d+)?$/.test(raw);
+  const formulaSafe =
+    !isPureSignedNumber && /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+  if (/[",\r\n]/.test(formulaSafe)) {
+    return `"${formulaSafe.replace(/"/g, '""')}"`;
+  }
+  return formulaSafe;
+}

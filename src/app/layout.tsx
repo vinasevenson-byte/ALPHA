@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "NOVA — Inteligência Financeira | Pacote 01 & Pacote 02",
+  title: "NOVA — Plataforma de Inteligência Financeira (PF & PJ)",
   description:
     "Seu dinheiro organizado. Seu futuro planejado. Plataforma financeira independente para Pessoas Físicas (PF) e Empresas (PJ).",
 };

@@ -42,12 +42,26 @@ import {
   PieChart,
   Link2,
   Bot,
+  LogOut,
+  UserPlus,
+  Trash2,
+  Repeat,
+  Tag,
+  Users,
+  Printer,
+  Download,
+  Play,
 } from "lucide-react";
 import {
   centsToDecimalString,
   formatBRL,
   formatDateBR,
+  sanitizeCsvCell,
 } from "@/domain/planning";
+import { calculateReserveCapacity } from "@/lib/financial-engine";
+import { IntelligenceEngineCard } from "@/components/IntelligenceEngineCard";
+import { ReserveSimulatorCard } from "@/components/ReserveSimulatorCard";
+import { AssistantAndCalendarView } from "@/components/AssistantAndCalendarView";
 import {
   NovaInvestmentsP03View,
   PositionRow,
@@ -99,6 +113,8 @@ interface WorkspaceItem {
   id: string;
   type: "PERSONAL" | "BUSINESS";
   name: string;
+  ownerId?: string | null;
+  reconciled?: boolean;
   baseCurrency: string;
   timezone: string;
   safetyBufferCents: number;
@@ -124,6 +140,10 @@ interface TransactionItem {
   accountId: string;
   account?: { name: string };
   categoryId?: string | null;
+  categoryName?: string | null;
+  isEssential?: boolean;
+  counterpartyId?: string | null;
+  counterpartyName?: string | null;
   costCenter?: string | null;
   kind:
     | "INCOME"
@@ -253,11 +273,77 @@ interface NovaStatePayload {
   activeWorkspace: WorkspaceItem;
   memberships: Array<{
     id: string;
+    userId: string;
     role: "OWNER" | "ADMIN" | "EDITOR" | "VIEWER";
-    user: { name: string; email: string };
+    status?: string;
+    user?: { id?: string; name: string; email: string };
   }>;
   accounts: AccountItem[];
   categories: Array<{ id: string; type: string; name: string; isEssential: boolean }>;
+  counterparties?: Array<{
+    id: string;
+    name: string;
+    type: string;
+    document?: string | null;
+    costCenter?: string | null;
+  }>;
+  recurrences?: Array<{
+    id: string;
+    accountId: string;
+    accountName?: string;
+    categoryId?: string | null;
+    categoryName?: string;
+    kind: "INCOME" | "EXPENSE";
+    title: string;
+    amountCents: number;
+    periodicity: "WEEKLY" | "MONTHLY" | "YEARLY";
+    nextDate: string;
+    endDate?: string | null;
+    active: boolean;
+  }>;
+  analytics?: {
+    monthlySummary: Array<{
+      period: string;
+      realizedIncomeCents: number;
+      realizedExpenseCents: number;
+      projectedIncomeCents: number;
+      projectedExpenseCents: number;
+      netRealizedCents: number;
+      netProjectedCents: number;
+    }>;
+    categoryBreakdown: Array<{
+      categoryName: string;
+      isEssential: boolean;
+      realizedCents: number;
+      projectedCents: number;
+      totalCents: number;
+      sharePct: number;
+    }>;
+    counterpartyBreakdown: Array<{
+      name: string;
+      document: string | null;
+      costCenter: string | null;
+      totalExpenseCents: number;
+      totalIncomeCents: number;
+      txCount: number;
+    }>;
+    predictiveCalendar21d: Array<{
+      dateIso: string;
+      dayLabel: string;
+      inflowCents: number;
+      outflowCents: number;
+      projectedBalanceCents: number;
+      riskState: "SAFE" | "BELOW_SAFETY" | "NEGATIVE";
+      events: Array<{
+        id: string;
+        description: string;
+        type: string;
+        amountCents: number;
+      }>;
+    }>;
+    essentialMonthlyExpensesCents: number;
+    topExpenseCategorySharePct: number;
+  };
   transactions: TransactionItem[];
   installments: InstallmentItem[];
   reserves: ReserveItem[];
@@ -412,6 +498,8 @@ export function NovaPlatformApp({
     new Date().toISOString().slice(0, 10)
   );
   const [txCostCenter, setTxCostCenter] = useState("");
+  const [txCategoryId, setTxCategoryId] = useState("");
+  const [txCounterpartyId, setTxCounterpartyId] = useState("");
 
   // Form states — Transferência Interna Atômica P01
   const [tfSourceId, setTfSourceId] = useState("");
@@ -424,7 +512,9 @@ export function NovaPlatformApp({
     "PAYABLE"
   );
   const [obTitle, setObTitle] = useState("");
+  const [obCategoryId, setObCategoryId] = useState("");
   const [obCategory, setObCategory] = useState("Moradia");
+  const [obCounterpartyId, setObCounterpartyId] = useState("");
   const [obCounterparty, setObCounterparty] = useState("");
   const [obCostCenter, setObCostCenter] = useState("");
   const [obTotalDecimal, setObTotalDecimal] = useState("300.00");
@@ -432,6 +522,50 @@ export function NovaPlatformApp({
   const [obFirstDue, setObFirstDue] = useState(() =>
     new Date().toISOString().slice(0, 10)
   );
+
+  // Form states — Recorrências Automáticas (Pacote 10)
+  const [recTitle, setRecTitle] = useState("");
+  const [recKind, setRecKind] = useState<"INCOME" | "EXPENSE">("EXPENSE");
+  const [recAccountId, setRecAccountId] = useState("");
+  const [recCategoryId, setRecCategoryId] = useState("");
+  const [recPeriodicity, setRecPeriodicity] = useState<
+    "MONTHLY" | "WEEKLY" | "YEARLY"
+  >("MONTHLY");
+  const [recNextDate, setRecNextDate] = useState(() =>
+    new Date().toISOString().slice(0, 10)
+  );
+  const [recAmountDecimal, setRecAmountDecimal] = useState("350.00");
+
+  // Form states — Categorias & Contrapartes (Pacote 10)
+  const [newCatName, setNewCatName] = useState("");
+  const [newCatType, setNewCatType] = useState<"EXPENSE" | "INCOME">("EXPENSE");
+  const [newCatEssential, setNewCatEssential] = useState(true);
+  const [newCpName, setNewCpName] = useState("");
+  const [newCpType, setNewCpType] = useState<"COMPANY" | "PERSON">("COMPANY");
+  const [newCpDoc, setNewCpDoc] = useState("");
+  const [newCpCostCenter, setNewCpCostCenter] = useState("");
+
+  // Form states — Governança Multi-Usuário RBAC & Sessões (Pacote 10)
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"ADMIN" | "EDITOR" | "VIEWER">(
+    "EDITOR"
+  );
+  const [currentUserInfo, setCurrentUserInfo] = useState<{
+    id: string;
+    name: string;
+    email: string;
+    currentSessionId?: string;
+  } | null>(null);
+  const [activeSessions, setActiveSessions] = useState<
+    Array<{
+      id: string;
+      createdAt: string;
+      lastSeenAt: string;
+      expiresAt: string;
+      userAgent?: string | null;
+      isCurrent?: boolean;
+    }>
+  >([]);
 
   // Form states — Baixa Parcial/Integral P02
   const [settleAccountId, setSettleAccountId] = useState("");
@@ -520,6 +654,7 @@ export function NovaPlatformApp({
         );
         if (json.accounts?.length > 0) {
           setTxAccountId((prev) => prev || json.accounts[0].id);
+          setRecAccountId((prev) => prev || json.accounts[0].id);
           setSettleAccountId((prev) => prev || json.accounts[0].id);
           setTfSourceId((prev) => prev || json.accounts[0].id);
           if (json.accounts.length > 1) {
@@ -535,9 +670,60 @@ export function NovaPlatformApp({
     [workspaceId, horizonDays, scenarioKind]
   );
 
+  const loadAuthProfile = useCallback(async () => {
+    try {
+      const res = await fetch("/api/auth/me", { cache: "no-store" });
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json.user) setCurrentUserInfo(json.user);
+      if (Array.isArray(json.sessions)) setActiveSessions(json.sessions);
+    } catch {
+      // ignore unauthenticated in preview mode
+    }
+  }, []);
+
   useEffect(() => {
     loadData(workspaceId, horizonDays, scenarioKind);
   }, [workspaceId, horizonDays, scenarioKind, loadData]);
+
+  useEffect(() => {
+    loadAuthProfile();
+  }, [loadAuthProfile, activeRoute]);
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+    } finally {
+      window.location.href = "/entrar";
+    }
+  };
+
+  const handleRevokeOtherSessions = async () => {
+    setBannerError(null);
+    setBannerSuccess(null);
+    try {
+      const res = await fetch("/api/auth/revoke-other-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setBannerError(json.message || "Falha ao encerrar outras sessões.");
+        return;
+      }
+      setBannerSuccess(
+        `Outras sessões encerradas (${json.revokedCount ?? 0} revogada(s)).`
+      );
+      await loadAuthProfile();
+    } catch {
+      setBannerError("Erro ao revogar sessões secundárias.");
+    }
+  };
 
   const navigateRoute = (route: NovaRouteKey, newWsId?: string) => {
     const ws = newWsId ?? workspaceId;
@@ -643,6 +829,9 @@ export function NovaPlatformApp({
     activeWorkspace,
     memberships,
     accounts,
+    categories = [],
+    counterparties = [],
+    recurrences = [],
     transactions,
     installments,
     reserves,
@@ -657,12 +846,26 @@ export function NovaPlatformApp({
   } = state;
 
   const isPJ = activeWorkspace.type === "BUSINESS";
-  const currentRole = memberships[0]?.role ?? "OWNER";
+  const matchedMember = currentUserInfo
+    ? memberships.find((m) => m.userId === currentUserInfo.id)
+    : undefined;
+  const currentRole = matchedMember?.role ?? memberships[0]?.role ?? "OWNER";
+  const canAdminWorkspace = currentRole === "OWNER" || currentRole === "ADMIN";
   const isZeroState =
     accounts.length === 0 &&
     transactions.length === 0 &&
     installments.length === 0 &&
     investmentPositions.length === 0;
+
+  const reserveCapacityEngine = calculateReserveCapacity({
+    availableBalanceCents: kpis.eligibleBalanceCents,
+    predictedBillsCents: kpis.openPayablesCents,
+    predictedIncomesCents: kpis.openReceivablesCents,
+    safetyMarginCents: kpis.safetyBufferCents,
+    essentialMonthlyExpensesCents:
+      state.analytics?.essentialMonthlyExpensesCents ?? 0,
+    workspaceType: isPJ ? "PJ" : "PF",
+  });
 
   // Cálculo integrado do Patrimônio Líquido e Saúde Financeira (P01 + P02 + P03)
   const netWorthCents =
@@ -1353,8 +1556,8 @@ export function NovaPlatformApp({
                 })}
               </div>
 
-              {/* Seletor Pessoal vs Empresarial */}
-              <div className="inline-flex rounded-xl bg-[#F5F6FA] p-1 ring-1 ring-slate-200/80">
+              {/* Seletor Pessoal vs Empresarial + Novo Ambiente */}
+              <div className="inline-flex items-center rounded-xl bg-[#F5F6FA] p-1 ring-1 ring-slate-200/80">
                 {workspaces.map((ws) => {
                   const active = ws.id === activeWorkspace.id;
                   return (
@@ -1383,6 +1586,14 @@ export function NovaPlatformApp({
                     </button>
                   );
                 })}
+                <a
+                  href="/onboarding"
+                  title="Criar novo ambiente Pessoal (PF) ou Empresarial (PJ)"
+                  className="ml-1 inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold text-[#6C5CE7] transition hover:bg-[#EFEFFD]"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Ambiente</span>
+                </a>
               </div>
 
               {/* Seletor de Horizonte (Incluindo Próximos 6 meses = 180d) */}
@@ -1421,38 +1632,6 @@ export function NovaPlatformApp({
                 />
               </div>
 
-              {/* Botão de Homologação Integrada (P01 + P02 + P03 + P04) ou Zerar */}
-              {isZeroState ? (
-                <button
-                  onClick={async () => {
-                    await executeAction(
-                      { action: "LOAD_P02_FIXTURE" },
-                      "Ambiente de homologação carregado (P01 Financeiro + P02 Planejamento + P03 Investimentos + P04 Inteligência & Open Finance)."
-                    );
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#6C5CE7]/25 bg-[#EFEFFD] px-3 py-1.5 text-xs font-bold text-[#6C5CE7] transition hover:bg-[#6C5CE7]/15"
-                  title="Carrega dados de teste integrados dos Pacotes 01, 02, 03 e 04 no banco de dados"
-                >
-                  <Beaker className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Carregar Dados de Teste</span>
-                </button>
-              ) : (
-                <button
-                  onClick={async () => {
-                    await executeAction(
-                      { action: "RESET_TO_ZERO" },
-                      "Workspace retornado ao estado inicial zerado (R$ 0,00)."
-                    );
-                    setInvestmentPositions([]);
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                  title="Voltar ao estado inicial sem dados cadastrados (R$ 0,00 / —)"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  <span>Zerar (R$ 0,00)</span>
-                </button>
-              )}
-
               <button
                 onClick={() => navigateRoute("inteligencia/alertas")}
                 className="relative rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-2 text-[#1E1B39] hover:border-[#6C5CE7]/40"
@@ -1482,6 +1661,15 @@ export function NovaPlatformApp({
                     ? "Cadastrar 1ª Conta"
                     : "Novo Lançamento"}
                 </span>
+              </button>
+
+              <button
+                onClick={handleLogout}
+                title="Encerrar sessão com segurança"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Sair</span>
               </button>
             </div>
           </div>
@@ -1699,8 +1887,8 @@ export function NovaPlatformApp({
                       </h3>
                       <p className="mt-1 max-w-md text-xs text-slate-500">
                         Nenhuma métrica fictícia é exibida. Cadastre sua
-                        primeira conta bancária ou carregue o cenário de
-                        homologação para visualizar a evolução patrimonial.
+                        primeira conta bancária ou importe um extrato real
+                        (.csv / .ofx) para acompanhar a evolução patrimonial.
                       </p>
                       <div className="mt-5 flex flex-wrap justify-center gap-2.5">
                         <button
@@ -1710,15 +1898,10 @@ export function NovaPlatformApp({
                           Cadastrar Primeira Conta
                         </button>
                         <button
-                          onClick={async () => {
-                            await executeAction(
-                              { action: "LOAD_P02_FIXTURE" },
-                              "Ambiente de homologação carregado (P01 + P02 + P03 + P04)."
-                            );
-                          }}
+                          onClick={() => navigateRoute("integracoes/importacoes")}
                           className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-4 py-2 text-xs font-semibold text-[#1E1B39] hover:border-[#6C5CE7]"
                         >
-                          Carregar Cenário Homologado (P01+P02+P03+P04)
+                          Importar Extrato (.CSV / .OFX)
                         </button>
                       </div>
                     </div>
@@ -2254,11 +2437,21 @@ export function NovaPlatformApp({
                               <div className="font-bold text-[#1E1B39]">
                                 {tx.description}
                               </div>
-                              {tx.costCenter && (
-                                <span className="text-[10px] text-slate-500">
-                                  Centro: {tx.costCenter}
-                                </span>
-                              )}
+                              <div className="mt-0.5 flex flex-wrap gap-1.5 text-[10px] text-slate-500">
+                                {tx.categoryName && (
+                                  <span className="rounded bg-slate-100 px-1.5 py-0.5 font-medium text-slate-700">
+                                    {tx.categoryName}
+                                  </span>
+                                )}
+                                {tx.counterpartyName && (
+                                  <span className="rounded bg-[#EFEFFD] px-1.5 py-0.5 font-medium text-[#6C5CE7]">
+                                    {tx.counterpartyName}
+                                  </span>
+                                )}
+                                {tx.costCenter && (
+                                  <span>Centro: {tx.costCenter}</span>
+                                )}
+                              </div>
                             </td>
                             <td className="px-4 py-3">
                               <span className="rounded-lg bg-[#EFEFFD] px-2 py-0.5 font-mono text-[10px] font-bold text-[#6C5CE7]">
@@ -2329,6 +2522,390 @@ export function NovaPlatformApp({
                       )}
                     </tbody>
                   </table>
+                </div>
+              </div>
+
+              {/* =============================================================
+                  PACOTE 10: MOTOR DE RECORRÊNCIAS AUTOMÁTICAS
+                 ============================================================= */}
+              <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="rounded-xl bg-[#EFEFFD] p-2 text-[#6C5CE7]">
+                      <Repeat className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <h3 className="text-sm font-extrabold text-[#1E1B39]">
+                        Motor de Recorrências Automáticas (Salários, Assinaturas, Aluguel, Contratos)
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Projeta automaticamente todas as ocorrências futuras no Fluxo de Caixa e permite materialização no Ledger com chave idempotente.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 text-[10px] font-bold text-[#6C5CE7]">
+                    {recurrences.filter((r) => r.active).length} ativa(s)
+                  </span>
+                </div>
+
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!recTitle.trim()) return;
+                    const ok = await executeAction(
+                      {
+                        action: "CREATE_RECURRENCE",
+                        title: recTitle,
+                        kind: recKind,
+                        accountId: recAccountId || accounts[0]?.id,
+                        categoryId: recCategoryId || undefined,
+                        periodicity: recPeriodicity,
+                        nextDate: recNextDate,
+                        amountDecimal: recAmountDecimal,
+                      },
+                      "Recorrência criada e incorporada à projeção automática."
+                    );
+                    if (ok) setRecTitle("");
+                  }}
+                  className="mt-4 grid grid-cols-1 gap-3 text-xs sm:grid-cols-7"
+                >
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Salário / Aluguel / AWS"
+                    value={recTitle}
+                    onChange={(e) => setRecTitle(e.target.value)}
+                    className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 sm:col-span-2"
+                  />
+                  <select
+                    value={recKind}
+                    onChange={(e) =>
+                      setRecKind(e.target.value as "INCOME" | "EXPENSE")
+                    }
+                    className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-2"
+                  >
+                    <option value="EXPENSE">Despesa Fixa</option>
+                    <option value="INCOME">Receita Recorrente</option>
+                  </select>
+                  <select
+                    value={recPeriodicity}
+                    onChange={(e) =>
+                      setRecPeriodicity(
+                        e.target.value as "MONTHLY" | "WEEKLY" | "YEARLY"
+                      )
+                    }
+                    className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-2"
+                  >
+                    <option value="MONTHLY">Mensal</option>
+                    <option value="WEEKLY">Semanal</option>
+                    <option value="YEARLY">Anual</option>
+                  </select>
+                  <input
+                    type="date"
+                    value={recNextDate}
+                    onChange={(e) => setRecNextDate(e.target.value)}
+                    className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-2"
+                  />
+                  <input
+                    type="text"
+                    required
+                    placeholder="Valor (R$)"
+                    value={recAmountDecimal}
+                    onChange={(e) => setRecAmountDecimal(e.target.value)}
+                    className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
+                  />
+                  <button
+                    type="submit"
+                    disabled={accounts.length === 0}
+                    className="rounded-xl bg-[#6C5CE7] px-3 py-2 font-bold text-white disabled:opacity-40"
+                  >
+                    + Recorrência
+                  </button>
+                </form>
+
+                {recurrences.length > 0 && (
+                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {recurrences.map((rec) => (
+                      <div
+                        key={rec.id}
+                        className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3.5 text-xs ${
+                          rec.active
+                            ? "border-slate-200 bg-[#F5F6FA]"
+                            : "border-slate-200 bg-slate-50 opacity-60"
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-[#1E1B39]">
+                              {rec.title}
+                            </span>
+                            <span className="rounded bg-[#EFEFFD] px-2 py-0.5 font-mono text-[10px] font-bold text-[#6C5CE7]">
+                              {rec.periodicity}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-[11px] text-slate-500">
+                            Próxima: {formatDateBR(rec.nextDate)} •{" "}
+                            {rec.accountName || "Conta"} •{" "}
+                            {rec.categoryName || "Geral"}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`font-mono font-extrabold ${
+                              rec.kind === "INCOME"
+                                ? "text-emerald-700"
+                                : "text-rose-700"
+                            }`}
+                          >
+                            {rec.kind === "INCOME" ? "+" : "-"}
+                            {formatBRL(rec.amountCents)}
+                          </span>
+                          {rec.active && (
+                            <button
+                              onClick={() =>
+                                executeAction(
+                                  {
+                                    action: "MATERIALIZE_RECURRENCE",
+                                    recurrenceId: rec.id,
+                                    settleImmediately: true,
+                                  },
+                                  `Ocorrência de ${rec.title} lançada no Ledger e próxima data avançada.`
+                                )
+                              }
+                              title="Lançar ocorrência atual no Ledger e avançar calendário"
+                              className="inline-flex items-center gap-1 rounded-lg bg-[#6C5CE7] px-2.5 py-1 text-[10px] font-bold text-white hover:bg-[#5849BE]"
+                            >
+                              <Play className="h-3 w-3" />
+                              Lançar
+                            </button>
+                          )}
+                          <button
+                            onClick={() =>
+                              executeAction(
+                                {
+                                  action: "TOGGLE_RECURRENCE",
+                                  recurrenceId: rec.id,
+                                },
+                                rec.active
+                                  ? "Recorrência pausada."
+                                  : "Recorrência reativada."
+                              )
+                            }
+                            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700"
+                          >
+                            {rec.active ? "Pausar" : "Ativar"}
+                          </button>
+                          <button
+                            onClick={() =>
+                              executeAction(
+                                {
+                                  action: "DELETE_RECURRENCE",
+                                  recurrenceId: rec.id,
+                                },
+                                "Recorrência removida."
+                              )
+                            }
+                            className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-semibold text-rose-700"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* =============================================================
+                  PACOTE 10: CATEGORIAS E CONTRAPARTES (CLIENTES / FORNECEDORES)
+                 ============================================================= */}
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                {/* Categorias */}
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <Tag className="h-4 w-4 text-[#6C5CE7]" />
+                    <h3 className="text-sm font-extrabold text-[#1E1B39]">
+                      Categorias Contábeis ({categories.length})
+                    </h3>
+                  </div>
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!newCatName.trim()) return;
+                      const ok = await executeAction(
+                        {
+                          action: "CREATE_CATEGORY",
+                          name: newCatName,
+                          type: newCatType,
+                          isEssential: newCatEssential,
+                        },
+                        "Categoria cadastrada."
+                      );
+                      if (ok) setNewCatName("");
+                    }}
+                    className="mt-3 flex flex-wrap items-center gap-2 text-xs"
+                  >
+                    <input
+                      type="text"
+                      required
+                      placeholder="Nova categoria..."
+                      value={newCatName}
+                      onChange={(e) => setNewCatName(e.target.value)}
+                      className="flex-1 rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-1.5"
+                    />
+                    <select
+                      value={newCatType}
+                      onChange={(e) =>
+                        setNewCatType(e.target.value as "EXPENSE" | "INCOME")
+                      }
+                      className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-1.5"
+                    >
+                      <option value="EXPENSE">Despesa</option>
+                      <option value="INCOME">Receita</option>
+                    </select>
+                    <label className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={newCatEssential}
+                        onChange={(e) => setNewCatEssential(e.target.checked)}
+                      />
+                      Essencial
+                    </label>
+                    <button
+                      type="submit"
+                      className="rounded-xl bg-[#6C5CE7] px-3 py-1.5 font-bold text-white"
+                    >
+                      Criar
+                    </button>
+                  </form>
+                  <div className="mt-3 flex max-h-44 flex-wrap gap-1.5 overflow-y-auto">
+                    {categories.map((cat) => (
+                      <span
+                        key={cat.id}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-[#F5F6FA] px-2.5 py-1 text-[11px] font-medium text-[#1E1B39]"
+                      >
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            cat.type === "INCOME"
+                              ? "bg-emerald-500"
+                              : cat.isEssential
+                              ? "bg-[#6C5CE7]"
+                              : "bg-amber-500"
+                          }`}
+                        />
+                        {cat.name}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            executeAction(
+                              {
+                                action: "ARCHIVE_CATEGORY",
+                                categoryId: cat.id,
+                              },
+                              "Categoria arquivada."
+                            )
+                          }
+                          title="Arquivar categoria"
+                          className="ml-0.5 text-slate-400 hover:text-rose-600"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Contrapartes (Clientes / Fornecedores) */}
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <Users className="h-4 w-4 text-[#6C5CE7]" />
+                    <h3 className="text-sm font-extrabold text-[#1E1B39]">
+                      Clientes &amp; Fornecedores ({counterparties.length})
+                    </h3>
+                  </div>
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!newCpName.trim()) return;
+                      const ok = await executeAction(
+                        {
+                          action: "CREATE_COUNTERPARTY",
+                          name: newCpName,
+                          type: newCpType,
+                          document: newCpDoc || undefined,
+                          costCenter: newCpCostCenter || undefined,
+                        },
+                        "Contraparte cadastrada."
+                      );
+                      if (ok) {
+                        setNewCpName("");
+                        setNewCpDoc("");
+                      }
+                    }}
+                    className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-4"
+                  >
+                    <input
+                      type="text"
+                      required
+                      placeholder="Nome / Razão Social"
+                      value={newCpName}
+                      onChange={(e) => setNewCpName(e.target.value)}
+                      className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-1.5 sm:col-span-2"
+                    />
+                    <input
+                      type="text"
+                      placeholder="CPF/CNPJ (opc.)"
+                      value={newCpDoc}
+                      onChange={(e) => setNewCpDoc(e.target.value)}
+                      className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-1.5 font-mono"
+                    />
+                    <button
+                      type="submit"
+                      className="rounded-xl bg-[#6C5CE7] px-3 py-1.5 font-bold text-white"
+                    >
+                      + Cadastrar
+                    </button>
+                  </form>
+                  <div className="mt-3 max-h-44 space-y-1.5 overflow-y-auto text-xs">
+                    {counterparties.length === 0 ? (
+                      <p className="text-[11px] text-slate-400">
+                        Nenhum cliente ou fornecedor cadastrado ainda.
+                      </p>
+                    ) : (
+                      counterparties.map((cp) => (
+                        <div
+                          key={cp.id}
+                          className="flex items-center justify-between rounded-lg bg-[#F5F6FA] px-3 py-1.5"
+                        >
+                          <div>
+                            <span className="font-bold text-[#1E1B39]">
+                              {cp.name}
+                            </span>
+                            {cp.document && (
+                              <span className="ml-2 font-mono text-[10px] text-slate-500">
+                                {cp.document}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              executeAction(
+                                {
+                                  action: "DELETE_COUNTERPARTY",
+                                  counterpartyId: cp.id,
+                                },
+                                "Contraparte removida."
+                              )
+                            }
+                            className="text-slate-400 hover:text-rose-600"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -2460,19 +3037,41 @@ export function NovaPlatformApp({
                               {formatBRL(inst.outstandingCents)}
                             </td>
                             <td className="px-4 py-3 text-right">
-                              {inst.outstandingCents > 0 && (
-                                <button
-                                  onClick={() => {
-                                    setSettlementTarget(inst);
-                                    setSettleAmountDecimal(
-                                      centsToDecimalString(inst.outstandingCents)
-                                    );
-                                  }}
-                                  className="rounded-lg bg-[#6C5CE7] px-3 py-1 text-[11px] font-bold text-white hover:bg-[#5849BE]"
-                                >
-                                  Registrar Baixa
-                                </button>
-                              )}
+                              {inst.outstandingCents > 0 &&
+                                inst.derivedStatus !== "CANCELED" && (
+                                  <div className="inline-flex flex-wrap justify-end gap-1.5">
+                                    <button
+                                      onClick={() => {
+                                        setSettlementTarget(inst);
+                                        setSettleAmountDecimal(
+                                          centsToDecimalString(
+                                            inst.outstandingCents
+                                          )
+                                        );
+                                      }}
+                                      className="rounded-lg bg-[#6C5CE7] px-3 py-1 text-[11px] font-bold text-white hover:bg-[#5849BE]"
+                                    >
+                                      Registrar Baixa
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        executeAction(
+                                          {
+                                            action: "CANCEL_OBLIGATION",
+                                            obligationId: inst.obligationId,
+                                            reason:
+                                              "Compromisso cancelado pelo usuário",
+                                          },
+                                          "Compromisso e parcelas em aberto cancelados."
+                                        )
+                                      }
+                                      title="Cancelar obrigação em aberto"
+                                      className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-semibold text-rose-800 hover:bg-rose-100"
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                )}
                             </td>
                           </tr>
                         ))
@@ -2570,6 +3169,34 @@ export function NovaPlatformApp({
                 </form>
               </div>
 
+              {/* Visão Consolidada: Motor Inteligente de Capacidade de Reserva + Simulação */}
+              {activeRoute === "planejamento" && (
+                <IntelligenceEngineCard
+                  reserveCapacity={reserveCapacityEngine}
+                  workspaceType={isPJ ? "PJ" : "PF"}
+                  onUpdateSafetyMargin={async (cents) => {
+                    await executeAction(
+                      {
+                        action: "UPDATE_SAFETY_BUFFER",
+                        safetyBufferDecimal: centsToDecimalString(cents),
+                      },
+                      "Margem de segurança atualizada."
+                    );
+                  }}
+                  onQuickAllocate={(cents) => {
+                    if (reserves[0]) {
+                      setReserveActionModal({
+                        reserve: reserves[0],
+                        mode: "ALLOCATE",
+                      });
+                      setResMoveAmountDecimal(centsToDecimalString(cents));
+                    } else {
+                      setShowReserveModal(true);
+                    }
+                  }}
+                />
+              )}
+
               {/* Subtela: Orçamento Inteligente */}
               {activeRoute === "planejamento/orcamentos" && (
                 <div className="space-y-4">
@@ -2593,10 +3220,18 @@ export function NovaPlatformApp({
                       </label>
                       <input
                         type="text"
+                        list="nova-budget-categories"
                         value={budgetCat}
                         onChange={(e) => setBudgetCat(e.target.value)}
                         className="mt-1 rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-1.5 text-xs"
                       />
+                      <datalist id="nova-budget-categories">
+                        {categories
+                          .filter((c) => c.type === "EXPENSE")
+                          .map((c) => (
+                            <option key={c.id} value={c.name} />
+                          ))}
+                      </datalist>
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-600">
@@ -2623,13 +3258,31 @@ export function NovaPlatformApp({
                         key={b.id}
                         className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs"
                       >
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-extrabold text-[#1E1B39]">
                             {b.categoryName} ({b.period})
                           </span>
-                          <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 font-mono text-xs font-bold text-[#6C5CE7]">
-                            {b.usagePct}% do teto
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 font-mono text-xs font-bold text-[#6C5CE7]">
+                              {b.usagePct}% do teto
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                executeAction(
+                                  {
+                                    action: "DELETE_BUDGET",
+                                    budgetId: b.id,
+                                  },
+                                  "Orçamento removido."
+                                )
+                              }
+                              title="Excluir orçamento"
+                              className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-100"
+                            >
+                              Excluir
+                            </button>
+                          </div>
                         </div>
                         <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-slate-600">
                           <div>
@@ -2773,15 +3426,28 @@ export function NovaPlatformApp({
                         key={g.id}
                         className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs"
                       >
-                        <div className="flex justify-between">
-                          <h4 className="font-extrabold text-[#1E1B39]">
-                            {g.name}
-                          </h4>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-extrabold text-[#1E1B39]">
+                              {g.name}
+                            </h4>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                                g.status === "ACHIEVED"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : g.status === "PAUSED"
+                                  ? "bg-amber-100 text-amber-800"
+                                  : "bg-[#EFEFFD] text-[#6C5CE7]"
+                              }`}
+                            >
+                              {g.status}
+                            </span>
+                          </div>
                           <span className="font-mono text-xs font-bold text-[#6C5CE7]">
                             {g.progressPct}%
                           </span>
                         </div>
-                        <p className="text-xs text-slate-500">
+                        <p className="mt-1 text-xs text-slate-500">
                           Cofre vinculado: {g.linkedReserveName} • Alvo:{" "}
                           {formatBRL(g.targetAmountCents)}
                         </p>
@@ -2792,10 +3458,105 @@ export function NovaPlatformApp({
                             {formatBRL(g.requiredMonthlyCents)}/mês
                           </strong>
                         </div>
+                        <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-3">
+                          {g.status !== "ACHIEVED" && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                executeAction(
+                                  {
+                                    action: "UPDATE_GOAL_STATUS",
+                                    goalId: g.id,
+                                    status: "ACHIEVED",
+                                  },
+                                  "Meta marcada como concluída!"
+                                )
+                              }
+                              className="rounded-lg bg-emerald-600 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-emerald-700"
+                            >
+                              Concluir Meta
+                            </button>
+                          )}
+                          {g.status === "ACTIVE" ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                executeAction(
+                                  {
+                                    action: "UPDATE_GOAL_STATUS",
+                                    goalId: g.id,
+                                    status: "PAUSED",
+                                  },
+                                  "Meta pausada."
+                                )
+                              }
+                              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-700"
+                            >
+                              Pausar
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                executeAction(
+                                  {
+                                    action: "UPDATE_GOAL_STATUS",
+                                    goalId: g.id,
+                                    status: "ACTIVE",
+                                  },
+                                  "Meta reativada."
+                                )
+                              }
+                              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-700"
+                            >
+                              Reativar
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              executeAction(
+                                {
+                                  action: "UPDATE_GOAL_STATUS",
+                                  goalId: g.id,
+                                  status: "DELETE",
+                                },
+                                "Meta removida."
+                              )
+                            }
+                            className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-700"
+                          >
+                            Excluir
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
                 </div>
+              )}
+
+              {/* Subtela: Calendário Preditivo 21d + Assistente Financeiro Determinístico */}
+              {activeRoute === "planejamento/calendario" && (
+                <AssistantAndCalendarView
+                  workspaceType={isPJ ? "PJ" : "PF"}
+                  workspaceName={activeWorkspace.name}
+                  reserveCapacity={reserveCapacityEngine}
+                  predictiveCalendar={
+                    state.analytics?.predictiveCalendar21d ?? []
+                  }
+                  transactions={transactions.map((t) => ({
+                    id: t.id,
+                    type: t.kind,
+                    status: t.status,
+                    amountCents: t.amountCents,
+                    description: t.description,
+                    category: t.categoryName || "Geral",
+                    costCenter: t.costCenter || "Geral",
+                    essentiality:
+                      t.isEssential === false ? "DISCRETIONARY" : "ESSENTIAL",
+                  }))}
+                  totalInvestmentsCents={p03Summary.totalEstimatedNetCents}
+                />
               )}
 
               {/* Série Diária de Fluxo de Caixa / Calendário Financeiro */}
@@ -2897,6 +3658,32 @@ export function NovaPlatformApp({
                   Criar Cofre
                 </button>
               </div>
+
+              {/* Motor Inteligente de Capacidade de Reserva + Simulador Rápido */}
+              <IntelligenceEngineCard
+                reserveCapacity={reserveCapacityEngine}
+                workspaceType={isPJ ? "PJ" : "PF"}
+                onUpdateSafetyMargin={async (cents) => {
+                  await executeAction(
+                    {
+                      action: "UPDATE_SAFETY_BUFFER",
+                      safetyBufferDecimal: centsToDecimalString(cents),
+                    },
+                    "Margem de segurança atualizada."
+                  );
+                }}
+                onQuickAllocate={(cents) => {
+                  if (reserves[0]) {
+                    setReserveActionModal({
+                      reserve: reserves[0],
+                      mode: "ALLOCATE",
+                    });
+                    setResMoveAmountDecimal(centsToDecimalString(cents));
+                  } else {
+                    setShowReserveModal(true);
+                  }
+                }}
+              />
 
               {/* Resumo de Cobertura */}
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
@@ -3023,6 +3810,11 @@ export function NovaPlatformApp({
                 ))}
               </div>
 
+              {/* Simulador de Juros Compostos da Reserva Inteligente */}
+              <ReserveSimulatorCard
+                reservePotentialCents={Math.max(100000, kpis.headroomCents)}
+              />
+
               {/* Explicação Auditável do Motor de Capacidade */}
               <div className="rounded-2xl border border-slate-200/80 bg-white p-5">
                 <h4 className="text-sm font-bold text-[#1E1B39]">
@@ -3098,87 +3890,598 @@ export function NovaPlatformApp({
           )}
 
           {/* =================================================================
-              TELA L: RELATÓRIOS E EXPORTAÇÃO CSV
+              TELA L (P11): DEMONSTRATIVO GERENCIAL PF / DRE SIMPLIFICADO PJ
              ================================================================= */}
           {activeRoute === "relatorios" && (
-            <div className="space-y-6">
+            <div className="space-y-6 print:space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
                 <div>
                   <h2 className="text-lg font-extrabold text-[#1E1B39]">
-                    Relatórios Consolidados ({activeWorkspace.name})
+                    {isPJ
+                      ? `DRE Gerencial Simplificado & Fluxo por Competência (${activeWorkspace.name})`
+                      : `Demonstrativo Financeiro Consolidado PF (${activeWorkspace.name})`}
                   </h2>
                   <p className="text-xs text-slate-500">
-                    Receitas x despesas realizadas, compromissos por vencimento
-                    e alocações de reservas e investimentos
+                    Apuração auditável de receitas e despesas realizadas vs.
+                    projetadas, concentração por categoria e ranking de{" "}
+                    {isPJ ? "clientes/fornecedores" : "contrapartes"} — com
+                    exportação CSV blindada contra injeção de fórmulas.
                   </p>
                 </div>
-                <button
-                  onClick={() => {
-                    const headers =
-                      "Data,Descricao,Tipo,Status,Valor_BRL\n" +
-                      transactions
-                        .map(
-                          (t) =>
-                            `${t.occurredOn},"${t.description}",${t.kind},${
-                              t.status
-                            },${centsToDecimalString(t.amountCents)}`
+                <div className="flex flex-wrap items-center gap-2 print:hidden">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-[#1E1B39] hover:bg-slate-50"
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Imprimir / PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const header = [
+                        "Data",
+                        "Descricao",
+                        "Categoria",
+                        "Contraparte",
+                        "Centro_Custo",
+                        "Tipo",
+                        "Status",
+                        "Valor_BRL",
+                      ]
+                        .map((h) => sanitizeCsvCell(h))
+                        .join(",");
+                      const rows = transactions.map((t) =>
+                        [
+                          sanitizeCsvCell(t.occurredOn),
+                          sanitizeCsvCell(t.description),
+                          sanitizeCsvCell(t.categoryName || "Geral"),
+                          sanitizeCsvCell(t.counterpartyName || ""),
+                          sanitizeCsvCell(t.costCenter || ""),
+                          sanitizeCsvCell(t.kind),
+                          sanitizeCsvCell(t.status),
+                          sanitizeCsvCell(centsToDecimalString(t.amountCents)),
+                        ].join(",")
+                      );
+                      const csv = [header, ...rows].join("\n");
+                      const blob = new Blob(["\uFEFF" + csv], {
+                        type: "text/csv;charset=utf-8;",
+                      });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `ledger-nova-${activeWorkspace.id}.csv`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#6C5CE7]/30 bg-[#EFEFFD] px-3.5 py-2 text-xs font-bold text-[#6C5CE7] hover:bg-[#E2E0FC]"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    CSV Ledger Seguro
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const monthly = state.analytics?.monthlySummary ?? [];
+                      const header = [
+                        "Competencia",
+                        "Receitas_Realizadas_BRL",
+                        "Despesas_Realizadas_BRL",
+                        "Resultado_Realizado_BRL",
+                        "Receitas_Previstas_BRL",
+                        "Despesas_Previstas_BRL",
+                        "Resultado_Projetado_BRL",
+                      ]
+                        .map((h) => sanitizeCsvCell(h))
+                        .join(",");
+                      const rows = monthly.map((m) =>
+                        [
+                          sanitizeCsvCell(m.period),
+                          sanitizeCsvCell(
+                            centsToDecimalString(m.realizedIncomeCents)
+                          ),
+                          sanitizeCsvCell(
+                            centsToDecimalString(m.realizedExpenseCents)
+                          ),
+                          sanitizeCsvCell(
+                            centsToDecimalString(m.netRealizedCents)
+                          ),
+                          sanitizeCsvCell(
+                            centsToDecimalString(m.projectedIncomeCents)
+                          ),
+                          sanitizeCsvCell(
+                            centsToDecimalString(m.projectedExpenseCents)
+                          ),
+                          sanitizeCsvCell(
+                            centsToDecimalString(m.netProjectedCents)
+                          ),
+                        ].join(",")
+                      );
+                      const csv = [header, ...rows].join("\n");
+                      const blob = new Blob(["\uFEFF" + csv], {
+                        type: "text/csv;charset=utf-8;",
+                      });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `dre-mensal-${activeWorkspace.id}.csv`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white hover:bg-[#5849BE]"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Exportar DRE Mensal CSV
+                  </button>
+                </div>
+              </div>
+
+              {/* 4 KPIs Executivos do Período */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs">
+                  <span className="text-xs font-semibold text-slate-500">
+                    {isPJ ? "Receita Operacional Realizada" : "Receitas Realizadas"}
+                  </span>
+                  <div className="mt-1 font-mono text-2xl font-extrabold text-emerald-700">
+                    {formatBRL(kpis.settledIncomeCents)}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs">
+                  <span className="text-xs font-semibold text-slate-500">
+                    {isPJ ? "Saídas / Custos Realizados" : "Despesas Realizadas"}
+                  </span>
+                  <div className="mt-1 font-mono text-2xl font-extrabold text-rose-700">
+                    {formatBRL(kpis.settledExpenseCents)}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs">
+                  <span className="text-xs font-semibold text-slate-500">
+                    {isPJ ? "Resultado Caixa Líquido" : "Superávit / Déficit Realizado"}
+                  </span>
+                  <div
+                    className={`mt-1 font-mono text-2xl font-extrabold ${
+                      kpis.settledIncomeCents - kpis.settledExpenseCents >= 0
+                        ? "text-[#1E1B39]"
+                        : "text-rose-700"
+                    }`}
+                  >
+                    {formatBRL(
+                      kpis.settledIncomeCents - kpis.settledExpenseCents
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-gradient-to-br from-[#6C5CE7] to-[#5849BE] p-4 text-white shadow-xs">
+                  <span className="text-xs font-bold text-violet-100">
+                    {isPJ ? "Margem Líquida de Caixa" : "Taxa de Poupança Realizada"}
+                  </span>
+                  <div className="mt-1 font-mono text-2xl font-black">
+                    {kpis.settledIncomeCents > 0
+                      ? `${Math.round(
+                          ((kpis.settledIncomeCents - kpis.settledExpenseCents) /
+                            kpis.settledIncomeCents) *
+                            1000
+                        ) / 10}%`
+                      : "0%"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Tabela Mensal: Demonstrativo / DRE por Competência */}
+              <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
+                <h3 className="text-sm font-extrabold text-[#1E1B39]">
+                  Demonstrativo Mensal — Realizado vs. Projetado (Ledger + Parcelas + Recorrências Ativas)
+                </h3>
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b border-slate-200 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
+                      <tr>
+                        <th className="px-3 py-2.5">Competência</th>
+                        <th className="px-3 py-2.5 text-right">
+                          Receita Realizada
+                        </th>
+                        <th className="px-3 py-2.5 text-right">
+                          Despesa Realizada
+                        </th>
+                        <th className="px-3 py-2.5 text-right">
+                          Resultado Realizado
+                        </th>
+                        <th className="px-3 py-2.5 text-right">
+                          Aberto / Recorrente ( Líq. )
+                        </th>
+                        <th className="px-3 py-2.5 text-right">
+                          Resultado Projetado
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {(state.analytics?.monthlySummary ?? []).length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={6}
+                            className="px-3 py-6 text-center font-sans text-xs text-slate-400"
+                          >
+                            Nenhuma movimentação ou projeção registrada até o momento.
+                          </td>
+                        </tr>
+                      ) : (
+                        (state.analytics?.monthlySummary ?? []).map((row) => {
+                          const openNet =
+                            row.projectedIncomeCents -
+                            row.projectedExpenseCents;
+                          return (
+                            <tr key={row.period} className="hover:bg-slate-50/70">
+                              <td className="px-3 py-2.5 font-bold text-[#1E1B39]">
+                                {row.period}
+                              </td>
+                              <td className="px-3 py-2.5 text-right text-emerald-700">
+                                +{formatBRL(row.realizedIncomeCents)}
+                              </td>
+                              <td className="px-3 py-2.5 text-right text-rose-700">
+                                -{formatBRL(row.realizedExpenseCents)}
+                              </td>
+                              <td
+                                className={`px-3 py-2.5 text-right font-bold ${
+                                  row.netRealizedCents >= 0
+                                    ? "text-emerald-700"
+                                    : "text-rose-700"
+                                }`}
+                              >
+                                {formatBRL(row.netRealizedCents)}
+                              </td>
+                              <td className="px-3 py-2.5 text-right text-slate-600">
+                                {openNet >= 0 ? "+" : ""}
+                                {formatBRL(openNet)}
+                              </td>
+                              <td
+                                className={`px-3 py-2.5 text-right font-extrabold ${
+                                  row.netProjectedCents >= 0
+                                    ? "text-[#6C5CE7]"
+                                    : "text-rose-700"
+                                }`}
+                              >
+                                {formatBRL(row.netProjectedCents)}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Breakdown por Categoria e Ranking de Contrapartes */}
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-extrabold text-[#1E1B39]">
+                      Concentração de Saídas por Categoria
+                    </h3>
+                    <span className="rounded-full bg-[#EFEFFD] px-2.5 py-0.5 font-mono text-[11px] font-bold text-[#6C5CE7]">
+                      Maior fatia:{" "}
+                      {state.analytics?.topExpenseCategorySharePct ?? 0}%
+                    </span>
+                  </div>
+                  <div className="mt-4 space-y-3 text-xs">
+                    {(state.analytics?.categoryBreakdown ?? []).length === 0 ? (
+                      <p className="text-slate-400">
+                        Sem despesas classificadas para compor o ranking.
+                      </p>
+                    ) : (
+                      (state.analytics?.categoryBreakdown ?? []).map((cat) => (
+                        <div key={cat.categoryName} className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-[#1E1B39]">
+                                {cat.categoryName}
+                              </span>
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                  cat.isEssential
+                                    ? "bg-[#EFEFFD] text-[#6C5CE7]"
+                                    : "bg-amber-50 text-amber-800"
+                                }`}
+                              >
+                                {cat.isEssential
+                                  ? "Essencial"
+                                  : "Discricionária"}
+                              </span>
+                            </div>
+                            <span className="font-mono font-bold text-[#1E1B39]">
+                              {formatBRL(cat.totalCents)} ({cat.sharePct}%)
+                            </span>
+                          </div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                            <div
+                              style={{
+                                width: `${Math.min(100, cat.sharePct)}%`,
+                              }}
+                              className={`h-full ${
+                                cat.sharePct > 50
+                                  ? "bg-rose-500"
+                                  : "bg-[#6C5CE7]"
+                              }`}
+                            />
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
+                  <h3 className="text-sm font-extrabold text-[#1E1B39]">
+                    Ranking de {isPJ ? "Clientes & Fornecedores" : "Contrapartes"}
+                  </h3>
+                  <div className="mt-4 space-y-2 text-xs">
+                    {(state.analytics?.counterpartyBreakdown ?? []).length ===
+                    0 ? (
+                      <p className="text-slate-400">
+                        Vincule clientes ou fornecedores aos lançamentos e obrigações para visualizar concentração comercial.
+                      </p>
+                    ) : (
+                      (state.analytics?.counterpartyBreakdown ?? []).map(
+                        (cp) => (
+                          <div
+                            key={cp.name}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#F5F6FA] px-3.5 py-2.5"
+                          >
+                            <div>
+                              <span className="font-bold text-[#1E1B39]">
+                                {cp.name}
+                              </span>
+                              <span className="ml-2 text-[10px] text-slate-500">
+                                ({cp.txCount} reg.)
+                              </span>
+                              {cp.costCenter && (
+                                <span className="ml-2 rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-600">
+                                  CC: {cp.costCenter}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 font-mono text-[11px]">
+                              {cp.totalIncomeCents > 0 && (
+                                <span className="font-bold text-emerald-700">
+                                  +{formatBRL(cp.totalIncomeCents)}
+                                </span>
+                              )}
+                              {cp.totalExpenseCents > 0 && (
+                                <span className="font-bold text-rose-700">
+                                  -{formatBRL(cp.totalExpenseCents)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         )
-                        .join("\n");
-                    const blob = new Blob([headers], {
-                      type: "text/csv;charset=utf-8;",
-                    });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `relatorio-nova-${activeWorkspace.id}.csv`;
-                    a.click();
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
-                >
-                  Exportar CSV Auditável
-                </button>
+                      )
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}
 
           {/* =================================================================
-              TELA M: ADMINISTRAÇÃO E PERMISSÕES RBAC
+              TELA M (P10): GOVERNANÇA RBAC MULTI-USUÁRIO, SESSÕES & AUDITORIA
              ================================================================= */}
           {(activeRoute === "configuracoes" || activeRoute === "auditoria") && (
             <div className="space-y-6">
+              {/* Gestão Multi-Usuário RBAC */}
               <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
-                <h2 className="text-lg font-extrabold text-[#1E1B39]">
-                  Administração, Perfis RBAC e Auditoria
-                </h2>
-                <p className="mt-1 text-xs text-slate-500">
-                  Alterne o papel ativo para testar bloqueios de autorização
-                  (ex.: VIEWER recebe HTTP 403 WORKSPACE_FORBIDDEN em mutações).
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                  <div>
+                    <h2 className="text-lg font-extrabold text-[#1E1B39]">
+                      Governança Multi-Usuário &amp; Permissões RBAC
+                    </h2>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Seu papel atual neste ambiente:{" "}
+                      <strong className="text-[#6C5CE7]">{currentRole}</strong>.{" "}
+                      {isPJ
+                        ? "Convide sócios, gestores financeiros ou contadores (VIEWER somente leitura)."
+                        : "Compartilhe o planejamento familiar com controle estrito de alçada."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!canAdminWorkspace}
+                    onClick={() =>
+                      executeAction(
+                        {
+                          action: "SET_WORKSPACE_RECONCILED",
+                          reconciled: !(
+                            state.p05Canonical?.reconciled ??
+                            activeWorkspace.reconciled ??
+                            false
+                          ),
+                        },
+                        "Status de conciliação contábil do ambiente atualizado."
+                      )
+                    }
+                    className={`rounded-xl px-3.5 py-2 text-xs font-bold transition disabled:opacity-50 ${
+                      state.p05Canonical?.reconciled ??
+                      activeWorkspace.reconciled
+                        ? "bg-emerald-100 text-emerald-800"
+                        : "border border-slate-200 bg-[#F5F6FA] text-slate-700"
+                    }`}
+                  >
+                    {state.p05Canonical?.reconciled ??
+                    activeWorkspace.reconciled
+                      ? "✓ Ambiente Conciliado (P05)"
+                      : "Marcar Ambiente Conciliado"}
+                  </button>
+                </div>
 
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {(["OWNER", "ADMIN", "EDITOR", "VIEWER"] as const).map(
-                    (role) => (
-                      <button
-                        key={role}
-                        onClick={() =>
-                          executeAction(
-                            { action: "SWITCH_ROLE", role },
-                            `Papel RBAC alterado para ${role}.`
-                          )
-                        }
-                        className={`rounded-xl px-4 py-2 text-xs font-bold ${
-                          currentRole === role
-                            ? "bg-[#6C5CE7] text-white"
-                            : "bg-[#F5F6FA] text-slate-700"
-                        }`}
-                      >
-                        {role}
-                      </button>
-                    )
-                  )}
+                {canAdminWorkspace && (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!inviteEmail.trim()) return;
+                      const ok = await executeAction(
+                        {
+                          action: "INVITE_WORKSPACE_MEMBER",
+                          email: inviteEmail.trim(),
+                          role: inviteRole,
+                        },
+                        `Membro ${inviteEmail.trim()} vinculado com papel ${inviteRole}.`
+                      );
+                      if (ok) setInviteEmail("");
+                    }}
+                    className="mt-4 flex flex-wrap items-center gap-2.5 text-xs"
+                  >
+                    <input
+                      type="email"
+                      required
+                      placeholder="E-mail de usuário já cadastrado na NOVA..."
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      className="min-w-[240px] flex-1 rounded-xl border border-slate-200 bg-[#F5F6FA] px-3.5 py-2"
+                    />
+                    <select
+                      value={inviteRole}
+                      onChange={(e) =>
+                        setInviteRole(
+                          e.target.value as "ADMIN" | "EDITOR" | "VIEWER"
+                        )
+                      }
+                      className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-semibold"
+                    >
+                      <option value="ADMIN">ADMIN (Gestão Total)</option>
+                      <option value="EDITOR">EDITOR (Operação Financeira)</option>
+                      <option value="VIEWER">VIEWER (Contador / Leitura)</option>
+                    </select>
+                    <button
+                      type="submit"
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 font-bold text-white hover:bg-[#5849BE]"
+                    >
+                      <UserPlus className="h-3.5 w-3.5" />
+                      Adicionar Membro
+                    </button>
+                  </form>
+                )}
+
+                <div className="mt-4 space-y-2 text-xs">
+                  {memberships.map((m) => (
+                    <div
+                      key={m.id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-[#F5F6FA] px-4 py-3"
+                    >
+                      <div>
+                        <span className="font-extrabold text-[#1E1B39]">
+                          {m.user?.name || m.userId}
+                        </span>
+                        {m.user?.email && (
+                          <span className="ml-2 text-slate-500">
+                            ({m.user.email})
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {canAdminWorkspace && m.role !== "OWNER" ? (
+                          <>
+                            <select
+                              value={m.role}
+                              onChange={(e) =>
+                                executeAction(
+                                  {
+                                    action: "UPDATE_MEMBER_ROLE",
+                                    targetUserId: m.userId,
+                                    role: e.target.value,
+                                  },
+                                  "Papel de acesso atualizado."
+                                )
+                              }
+                              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-[#6C5CE7]"
+                            >
+                              <option value="ADMIN">ADMIN</option>
+                              <option value="EDITOR">EDITOR</option>
+                              <option value="VIEWER">VIEWER</option>
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                executeAction(
+                                  {
+                                    action: "REMOVE_WORKSPACE_MEMBER",
+                                    targetUserId: m.userId,
+                                  },
+                                  "Acesso do membro revogado."
+                                )
+                              }
+                              className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-100"
+                            >
+                              Remover
+                            </button>
+                          </>
+                        ) : (
+                          <span className="rounded-full bg-[#EFEFFD] px-3 py-1 font-mono text-[11px] font-bold text-[#6C5CE7]">
+                            {m.role}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
 
+              {/* Segurança de Sessão P09 */}
+              <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-extrabold text-[#1E1B39]">
+                      Segurança de Autenticação &amp; Sessões Ativas (P09)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      {currentUserInfo
+                        ? `Conectado como ${currentUserInfo.name} (${currentUserInfo.email}) • ${activeSessions.length} sessão(ões) ativa(s).`
+                        : "Sessão protegida via cookie HttpOnly + validação transacional."}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {activeSessions.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={handleRevokeOtherSessions}
+                        className="rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2 text-xs font-bold text-amber-900 hover:bg-amber-100"
+                      >
+                        Encerrar Outras Sessões ({activeSessions.length - 1})
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100"
+                    >
+                      <LogOut className="h-3.5 w-3.5" />
+                      Encerrar Sessão Atual
+                    </button>
+                  </div>
+                </div>
+                {activeSessions.length > 0 && (
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-[11px] md:grid-cols-2">
+                    {activeSessions.map((sess) => (
+                      <div
+                        key={sess.id}
+                        className="flex items-center justify-between rounded-xl border border-slate-200/70 bg-[#F5F6FA] px-3 py-2"
+                      >
+                        <div className="truncate pr-2">
+                          <span className="font-bold text-[#1E1B39]">
+                            {sess.isCurrent ? "● Dispositivo Atual" : "Sessão Secundária"}
+                          </span>
+                          <p className="truncate text-[10px] text-slate-500">
+                            {sess.userAgent || "Navegador Web"}
+                          </p>
+                        </div>
+                        <span className="shrink-0 font-mono text-[10px] text-slate-500">
+                          Expira {formatDateBR(sess.expiresAt.slice(0, 10))}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Trilha Imutável de Auditoria */}
               <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs">
                 <h3 className="text-base font-extrabold text-[#1E1B39]">
                   Eventos de Auditoria ({auditEvents.length})
@@ -3214,6 +4517,7 @@ export function NovaPlatformApp({
                 activeRoute === "simulacoes" ? "simulador" : "visao-geral"
               }
               positions={investmentPositions}
+              accounts={accounts}
               onPositionsChange={setInvestmentPositions}
               onPersistAction={executeAction}
               workspaceHeadroomCents={kpis.headroomCents}
@@ -3368,13 +4672,15 @@ export function NovaPlatformApp({
                 {
                   action: "CREATE_TRANSACTION",
                   accountId: txAccountId || accounts[0]?.id,
+                  categoryId: txCategoryId || undefined,
+                  counterpartyId: txCounterpartyId || undefined,
                   kind: txKind,
                   status: txStatus,
                   description: txDescription,
                   amountDecimal: txAmountDecimal,
                   occurredOn: txDate,
                   dueOn: txDate,
-                  costCenter: txCostCenter,
+                  costCenter: txCostCenter || undefined,
                 },
                 "Lançamento registrado."
               );
@@ -3433,6 +4739,42 @@ export function NovaPlatformApp({
                   ))}
                 </select>
               </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="font-bold">Categoria</label>
+                  <select
+                    value={txCategoryId}
+                    onChange={(e) => setTxCategoryId(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  >
+                    <option value="">Sem categoria (Geral)</option>
+                    {categories
+                      .filter((c) => c.type === txKind)
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold">
+                    {isPJ ? "Cliente / Fornecedor" : "Contraparte"}
+                  </label>
+                  <select
+                    value={txCounterpartyId}
+                    onChange={(e) => setTxCounterpartyId(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  >
+                    <option value="">Opcional</option>
+                    {counterparties.map((cp) => (
+                      <option key={cp.id} value={cp.id}>
+                        {cp.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               <div>
                 <label className="font-bold">Descrição</label>
                 <input
@@ -3443,7 +4785,7 @@ export function NovaPlatformApp({
                   className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="font-bold">Valor Positivo (R$)</label>
                   <input
@@ -3460,6 +4802,16 @@ export function NovaPlatformApp({
                     type="date"
                     value={txDate}
                     onChange={(e) => setTxDate(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold">Centro Custo</label>
+                  <input
+                    type="text"
+                    placeholder="Opcional"
+                    value={txCostCenter}
+                    onChange={(e) => setTxCostCenter(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   />
                 </div>
@@ -3574,7 +4926,9 @@ export function NovaPlatformApp({
                   action: "CREATE_OBLIGATION",
                   direction: obDirection,
                   title: obTitle,
+                  categoryId: obCategoryId || undefined,
                   categoryName: obCategory,
+                  counterpartyId: obCounterpartyId || undefined,
                   counterparty: obCounterparty,
                   costCenter: obCostCenter,
                   totalAmountDecimal: obTotalDecimal,
@@ -3621,6 +4975,56 @@ export function NovaPlatformApp({
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
+                  <label className="font-bold">Categoria</label>
+                  <select
+                    value={obCategoryId}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setObCategoryId(val);
+                      const found = categories.find((c) => c.id === val);
+                      if (found) setObCategory(found.name);
+                    }}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  >
+                    <option value="">Padrão ({obCategory || "Geral"})</option>
+                    {categories
+                      .filter((c) =>
+                        obDirection === "PAYABLE"
+                          ? c.type === "EXPENSE"
+                          : c.type === "INCOME"
+                      )
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold">
+                    {isPJ ? "Cliente / Fornecedor" : "Contraparte"}
+                  </label>
+                  <select
+                    value={obCounterpartyId}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setObCounterpartyId(val);
+                      const found = counterparties.find((cp) => cp.id === val);
+                      setObCounterparty(found ? found.name : "");
+                    }}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  >
+                    <option value="">Opcional</option>
+                    {counterparties.map((cp) => (
+                      <option key={cp.id} value={cp.id}>
+                        {cp.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
                   <label className="font-bold">Valor Total (R$)</label>
                   <input
                     type="text"
@@ -3642,14 +5046,26 @@ export function NovaPlatformApp({
                   />
                 </div>
               </div>
-              <div>
-                <label className="font-bold">1º Vencimento</label>
-                <input
-                  type="date"
-                  value={obFirstDue}
-                  onChange={(e) => setObFirstDue(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
-                />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="font-bold">1º Vencimento</label>
+                  <input
+                    type="date"
+                    value={obFirstDue}
+                    onChange={(e) => setObFirstDue(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold">Centro de Custo</label>
+                  <input
+                    type="text"
+                    placeholder="Opcional"
+                    value={obCostCenter}
+                    onChange={(e) => setObCostCenter(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  />
+                </div>
               </div>
             </div>
             <div className="mt-5 flex justify-end gap-2">

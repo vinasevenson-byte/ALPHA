@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { middleware } from "../../middleware";
 
-describe("NOVA Pacote 08 & Correção Abertura Vercel — Middleware HTTP Basic Obrigatório e Modo Somente Leitura", () => {
+describe("NOVA Pacote 08 + Pacote 09 — Middleware HTTP Basic, Autenticação Real e Política de Escrita", () => {
   const originalEnv = { ...process.env };
 
   afterEach(() => {
@@ -46,10 +46,11 @@ describe("NOVA Pacote 08 & Correção Abertura Vercel — Middleware HTTP Basic 
     expect(res.headers.get("WWW-Authenticate")).toContain("Basic realm");
   });
 
-  it("bloqueia operações POST em /api/* e /v1/* com 403 READ_ONLY_HOMOLOGATION mesmo autenticado no Basic Auth", async () => {
+  it("bloqueia operações POST financeiras em /api/platform com 403 READ_ONLY_HOMOLOGATION quando NOVA_ENABLE_FINANCIAL_WRITES !== 'true'", async () => {
     process.env.VERCEL_ENV = "production";
     process.env.NOVA_PREVIEW_USER = "nova-homologacao";
     process.env.NOVA_PREVIEW_PASSWORD = "senha-extremamente-longa-para-homologacao-2026";
+    delete process.env.NOVA_ENABLE_FINANCIAL_WRITES;
     const basic = Buffer.from(
       `${process.env.NOVA_PREVIEW_USER}:${process.env.NOVA_PREVIEW_PASSWORD}`
     ).toString("base64");
@@ -62,6 +63,50 @@ describe("NOVA Pacote 08 & Correção Abertura Vercel — Middleware HTTP Basic 
     expect(postRes.status).toBe(403);
     const body = await postRes.json();
     expect(body.code).toBe("READ_ONLY_HOMOLOGATION");
+  });
+
+  it("permite POST em /api/auth/* (login, cadastro, logout) e no assistente somente-leitura /v1/workspaces/:id/assistant/query", () => {
+    process.env.VERCEL_ENV = "production";
+    process.env.NOVA_PREVIEW_USER = "nova-homologacao";
+    process.env.NOVA_PREVIEW_PASSWORD = "senha-extremamente-longa-para-homologacao-2026";
+    process.env.NOVA_ENABLE_FINANCIAL_WRITES = "false";
+    const basic = Buffer.from(
+      `${process.env.NOVA_PREVIEW_USER}:${process.env.NOVA_PREVIEW_PASSWORD}`
+    ).toString("base64");
+
+    const loginRes = middleware(
+      new NextRequest("https://alpha-kilw.vercel.app/api/auth/login", {
+        method: "POST",
+        headers: { Authorization: `Basic ${basic}` },
+      })
+    );
+    expect(loginRes.status).toBe(200);
+
+    const assistantRes = middleware(
+      new NextRequest("https://alpha-kilw.vercel.app/v1/workspaces/ws-123/assistant/query", {
+        method: "POST",
+        headers: { Authorization: `Basic ${basic}` },
+      })
+    );
+    expect(assistantRes.status).toBe(200);
+  });
+
+  it("libera POST em /api/platform no middleware quando NOVA_ENABLE_FINANCIAL_WRITES='true' (delegando RBAC/sessão à rota)", () => {
+    process.env.VERCEL_ENV = "production";
+    process.env.NOVA_PREVIEW_USER = "nova-homologacao";
+    process.env.NOVA_PREVIEW_PASSWORD = "senha-extremamente-longa-para-homologacao-2026";
+    process.env.NOVA_ENABLE_FINANCIAL_WRITES = "true";
+    const basic = Buffer.from(
+      `${process.env.NOVA_PREVIEW_USER}:${process.env.NOVA_PREVIEW_PASSWORD}`
+    ).toString("base64");
+
+    const postRes = middleware(
+      new NextRequest("https://alpha-kilw.vercel.app/api/platform", {
+        method: "POST",
+        headers: { Authorization: `Basic ${basic}` },
+      })
+    );
+    expect(postRes.status).toBe(200);
   });
 
   it("permite GET autenticado e aplica cabeçalhos noindex e no-store", () => {

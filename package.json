@@ -10,9 +10,9 @@
     "build": "prisma generate && next build",
     "vercel-build": "prisma generate",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "tsc --noEmit && node tools/preflight.mjs && node scripts/p09-check.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "prisma generate --schema apps/api/prisma/schema.prisma && vitest run && node --test apps/api/test/*.test.mjs tests/p09-structural.test.mjs",
+    "test": "prisma generate --schema apps/api/prisma/schema.prisma && vitest run && node --test apps/api/test/*.test.mjs tests/p09-structural.test.mjs && prisma generate",
     "test:p06": "node --test apps/api/test/*.test.mjs",
     "test:p05-node": "node --test apps/dev-server/test/domain.test.mjs",
     "db:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
@@ -30,7 +30,7 @@
     "clsx": "^2.1.1",
     "decimal.js": "^10.5.0",
     "lucide-react": "^0.475.0",
-    "next": "15.5.28",
+    "next": "15.5.29",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwind-merge": "^3.0.1"
@@ -40,12 +40,15 @@
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
     "autoprefixer": "^10.4.20",
-    "postcss": "^8.5.2",
+    "postcss": "^8.5.32",
     "prisma": "^6.11.0",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^3.0.5"
+  },
+  "overrides": {
+    "postcss": "^8.5.32"
   },
   "engines": {
     "node": ">=20"
