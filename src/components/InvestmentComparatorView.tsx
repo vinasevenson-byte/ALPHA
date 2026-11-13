@@ -178,7 +178,7 @@ export function InvestmentComparatorView({
   return (
     <div className="space-y-6">
       {/* Cabeçalho de Indicadores de Mercado e Carteira */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
           <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
             Patrimônio Investido ({workspaceType})
@@ -398,7 +398,7 @@ export function InvestmentComparatorView({
         </div>
 
         {/* Filtros do Comparador */}
-        <div className="mt-4 grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4 md:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4 md:grid-cols-2 lg:grid-cols-3">
           <div>
             <label className="block text-xs font-medium text-slate-300">
               1. Qual é o seu objetivo para este recurso?

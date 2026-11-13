@@ -129,7 +129,7 @@ export function ReserveSimulatorCard({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <div className="flex justify-between text-xs">
                 <label className="font-medium text-slate-300">Prazo</label>
@@ -222,7 +222,7 @@ export function ReserveSimulatorCard({
                     Taxa eq. mensal: {formatPct(result.monthlyEquivalentRatePct, 4)}
                   </span>
                 </div>
-                <div className="grid grid-cols-5 gap-2 sm:grid-cols-6">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-6">
                   {result.yearlyEvolution.slice(-6).map((pt) => {
                     const heightPct = Math.max(
                       12,

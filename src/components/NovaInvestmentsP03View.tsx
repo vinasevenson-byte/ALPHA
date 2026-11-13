@@ -337,19 +337,19 @@ export function NovaInvestmentsP03View({
           </div>
         </div>
 
-        {/* Navegação de Módulos do Pacote 03 */}
-        <div className="mt-4 flex flex-wrap gap-1.5">
+        {/* Navegação de Módulos do Pacote 03 (Deslizável por toque no celular, fluida no tablet/desktop) */}
+        <div className="no-scrollbar -mx-1 mt-4 flex flex-nowrap gap-1.5 overflow-x-auto px-1 pb-1 sm:mx-0 sm:flex-wrap sm:px-0 sm:pb-0">
           {[
             { key: "visao-geral" as P03TabKey, label: "Visão Geral", icon: PieChart },
             { key: "carteira" as P03TabKey, label: "Minha Carteira", icon: Briefcase },
             { key: "operacoes" as P03TabKey, label: "Operações", icon: ArrowLeftRight },
-            { key: "comparador" as P03TabKey, label: "Comparador de Aplicações", icon: Scale },
+            { key: "comparador" as P03TabKey, label: "Comparador", icon: Scale },
             { key: "rentabilidade" as P03TabKey, label: "Rentabilidade", icon: TrendingUp },
             { key: "riscos" as P03TabKey, label: "Liquidez e Riscos", icon: ShieldAlert },
-            { key: "simulador" as P03TabKey, label: "Simulador Patrimonial", icon: Calculator },
+            { key: "simulador" as P03TabKey, label: "Simulador", icon: Calculator },
             { key: "metas" as P03TabKey, label: "Metas e Reservas", icon: Shield },
             { key: "relatorios" as P03TabKey, label: "Relatórios", icon: FileBarChart2 },
-            { key: "fontes" as P03TabKey, label: "Fontes e Atualizações", icon: Database },
+            { key: "fontes" as P03TabKey, label: "Fontes", icon: Database },
           ].map((t) => {
             const Icon = t.icon;
             const active = subTab === t.key;
@@ -357,13 +357,13 @@ export function NovaInvestmentsP03View({
               <button
                 key={t.key}
                 onClick={() => setSubTab(t.key)}
-                className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition ${
+                className={`inline-flex min-h-[38px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl px-3.5 py-2 text-xs font-bold transition active:scale-[0.98] ${
                   active
                     ? "bg-[#6C5CE7] text-white shadow-sm"
                     : "bg-[#F5F6FA] text-slate-600 hover:bg-[#EFEFFD] hover:text-[#6C5CE7]"
                 }`}
               >
-                <Icon className="h-3.5 w-3.5" />
+                <Icon className="h-3.5 w-3.5 shrink-0" />
                 {t.label}
               </button>
             );
@@ -553,17 +553,18 @@ export function NovaInvestmentsP03View({
 
             <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-12">
               <div className="space-y-4 text-xs lg:col-span-5">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label className="font-bold text-slate-700">
                       Capital inicial (R$)
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       min={0}
                       value={simPrincipal}
                       onChange={(e) => setSimPrincipal(Number(e.target.value))}
-                      className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
+                      className="mt-1 min-h-[42px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
                     />
                   </div>
                   <div>
@@ -572,26 +573,28 @@ export function NovaInvestmentsP03View({
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       min={0}
                       value={simMonthly}
                       onChange={(e) => setSimMonthly(Number(e.target.value))}
-                      className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
+                      className="mt-1 min-h-[42px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div>
                     <label className="font-bold text-slate-700">
                       Prazo (anos)
                     </label>
                     <input
                       type="number"
+                      inputMode="numeric"
                       min={1}
                       max={60}
                       value={simYears}
                       onChange={(e) => setSimYears(Number(e.target.value))}
-                      className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
+                      className="mt-1 min-h-[42px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
                     />
                   </div>
                   <div>
@@ -600,10 +603,11 @@ export function NovaInvestmentsP03View({
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step={0.25}
                       value={simAnnualRatePct}
                       onChange={(e) => setSimAnnualRatePct(Number(e.target.value))}
-                      className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
+                      className="mt-1 min-h-[42px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
                     />
                   </div>
                   <div>
@@ -612,10 +616,11 @@ export function NovaInvestmentsP03View({
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step={0.25}
                       value={simInflationPct}
                       onChange={(e) => setSimInflationPct(Number(e.target.value))}
-                      className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
+                      className="mt-1 min-h-[42px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono text-sm font-bold text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
                     />
                   </div>
                 </div>
@@ -692,22 +697,23 @@ export function NovaInvestmentsP03View({
                 mercado.
               </p>
             </div>
-            <div className="flex items-center gap-3 text-xs">
-              <div>
-                <label className="mr-1.5 font-bold text-slate-600">Valor (R$):</label>
+            <div className="flex w-full flex-wrap items-center gap-3 text-xs sm:w-auto">
+              <div className="flex-1 sm:flex-initial">
+                <label className="mr-1.5 block font-bold text-slate-600 sm:inline">Valor (R$):</label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   value={compAmount}
                   onChange={(e) => setCompAmount(Number(e.target.value))}
-                  className="w-28 rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-1.5 font-mono font-bold text-[#1E1B39]"
+                  className="mt-1 min-h-[40px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-1.5 font-mono font-bold text-[#1E1B39] sm:mt-0 sm:w-28"
                 />
               </div>
-              <div>
-                <label className="mr-1.5 font-bold text-slate-600">Prazo:</label>
+              <div className="flex-1 sm:flex-initial">
+                <label className="mr-1.5 block font-bold text-slate-600 sm:inline">Prazo:</label>
                 <select
                   value={compDays}
                   onChange={(e) => setCompDays(Number(e.target.value))}
-                  className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-1.5 font-bold text-[#1E1B39]"
+                  className="mt-1 min-h-[40px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-1.5 font-bold text-[#1E1B39] sm:mt-0 sm:w-auto"
                 >
                   <option value={90}>90 dias (IR 22,5%)</option>
                   <option value={180}>180 dias (IR 22,5%)</option>
@@ -1095,7 +1101,169 @@ export function NovaInvestmentsP03View({
                 {positions.length} ativo(s) monitorado(s)
               </span>
             </div>
-            <div className="overflow-x-auto">
+            {/* Versão Celular (<768px): Cartões de Custódia Touch */}
+            <div className="divide-y divide-slate-100 md:hidden">
+              {positions.length === 0 ? (
+                <div className="px-4 py-10 text-center text-xs text-slate-500">
+                  Nenhum investimento cadastrado. Os indicadores permanecem em R$ 0,00 até o registro da primeira posição real.
+                </div>
+              ) : (
+                positions.map((pos) => {
+                  const isExempt =
+                    (pos.kind === "LCI" || pos.kind === "LCA") &&
+                    workspaceType === "PERSONAL";
+                  const netVal = isExempt
+                    ? pos.currentGrossReais
+                    : taxableFixedIncomeRedemption({
+                        principal: pos.costBasisReais,
+                        grossRedemption: pos.currentGrossReais,
+                        days: Math.max(30, pos.daysHeld),
+                      }).netRedemption;
+
+                  return (
+                    <div key={pos.id} className="space-y-3 p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="rounded-lg bg-[#EFEFFD] px-2 py-0.5 font-mono text-[10px] font-bold text-[#6C5CE7]">
+                              {pos.kind}
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              {pos.rateLabel}
+                            </span>
+                          </div>
+                          <h4 className="mt-1 text-sm font-extrabold text-[#1E1B39]">
+                            {pos.name}
+                          </h4>
+                          <p className="text-[11px] text-slate-500">
+                            {pos.institution} • Venc: {pos.maturityDate}
+                          </p>
+                        </div>
+                        {pos.quoteStatus === "VALID" ? (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                            <CheckCircle2 className="h-3 w-3" /> Válida
+                          </span>
+                        ) : (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                            <AlertTriangle className="h-3 w-3" /> Defasada
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 rounded-xl bg-[#F5F6FA] p-2.5 text-[11px]">
+                        <div>
+                          <span className="block text-[10px] text-slate-500">Custo</span>
+                          <strong className="font-mono text-slate-700">
+                            {formatBRL(Math.round(pos.costBasisReais * 100))}
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="block text-[10px] text-slate-500">Bruto</span>
+                          <strong className="font-mono text-[#1E1B39]">
+                            {formatBRL(Math.round(pos.currentGrossReais * 100))}
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="block text-[10px] text-[#6C5CE7]">Líq. Est.</span>
+                          <strong className="font-mono text-[#6C5CE7]">
+                            {formatBRL(Math.round(netVal * 100))}
+                          </strong>
+                        </div>
+                      </div>
+
+                      {editingQuotePosId === pos.id && (
+                        <div className="flex items-center gap-2 rounded-xl border border-[#6C5CE7]/30 bg-[#EFEFFD]/50 p-2.5">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={quoteDecimalInput}
+                            onChange={(e) => setQuoteDecimalInput(e.target.value)}
+                            className="min-h-[40px] flex-1 rounded-xl border border-[#6C5CE7] bg-white px-3 py-1.5 font-mono text-sm font-bold"
+                          />
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (onPersistAction) {
+                                const ok = await onPersistAction(
+                                  {
+                                    action: "REDEEM_OR_UPDATE_INVESTMENT",
+                                    subAction: "UPDATE_QUOTE",
+                                    positionId: pos.id,
+                                    newGrossDecimal: quoteDecimalInput,
+                                  },
+                                  "Cotação da posição atualizada."
+                                );
+                                if (ok) setEditingQuotePosId(null);
+                              }
+                            }}
+                            className="min-h-[40px] rounded-xl bg-[#6C5CE7] px-3.5 py-1.5 text-xs font-bold text-white"
+                          >
+                            Salvar
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingQuotePosId(
+                              editingQuotePosId === pos.id ? null : pos.id
+                            );
+                            setQuoteDecimalInput(
+                              centsToDecimalString(
+                                Math.round(pos.currentGrossReais * 100)
+                              )
+                            );
+                          }}
+                          className="inline-flex min-h-[38px] flex-1 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-700"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          Cotação
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRedeemingPos(pos);
+                            setRedeemGrossDecimal(
+                              centsToDecimalString(
+                                Math.round(pos.currentGrossReais * 100)
+                              )
+                            );
+                          }}
+                          className="inline-flex min-h-[38px] flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#EFEFFD] px-2.5 py-2 text-xs font-bold text-[#6C5CE7]"
+                        >
+                          <ArrowDownToLine className="h-3.5 w-3.5" />
+                          Resgatar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (onPersistAction) {
+                              await onPersistAction(
+                                {
+                                  action: "REDEEM_OR_UPDATE_INVESTMENT",
+                                  subAction: "DELETE",
+                                  positionId: pos.id,
+                                },
+                                "Posição removida da carteira."
+                              );
+                            }
+                          }}
+                          aria-label="Remover Posição"
+                          className="inline-flex min-h-[38px] items-center justify-center rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Versão Tablet & Desktop (>=768px): Tabela Completa */}
+            <div className="hidden overflow-x-auto md:block">
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-slate-200/80 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                   <tr>

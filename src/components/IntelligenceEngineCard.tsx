@@ -116,7 +116,7 @@ export function IntelligenceEngineCard({
 
       {/* Painel de Ajuste se simMode estiver ativo */}
       {simMode && (
-        <div className="mt-4 grid grid-cols-1 gap-4 rounded-xl border border-amber-500/25 bg-slate-950/70 p-4 md:grid-cols-4">
+        <div className="mt-4 grid grid-cols-1 gap-4 rounded-xl border border-amber-500/25 bg-slate-950/70 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <label className="block text-xs font-medium text-slate-400">
               Saldo Disponível Simulado (R$)

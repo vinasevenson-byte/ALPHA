@@ -271,18 +271,18 @@ export function AssistantAndCalendarView({
             e.preventDefault();
             handleAsk(question);
           }}
-          className="mt-4 flex gap-2 border-t border-slate-800 pt-4"
+          className="mt-4 flex flex-col gap-2 border-t border-slate-800 pt-4 sm:flex-row"
         >
           <input
             type="text"
             placeholder="Pergunte sobre seus gastos, reservas ou metas..."
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            className="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+            className="min-h-[42px] flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
           />
           <button
             type="submit"
-            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-emerald-400"
+            className="inline-flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-emerald-400"
           >
             <Send className="h-3.5 w-3.5" />
             Perguntar

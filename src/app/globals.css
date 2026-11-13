@@ -11,32 +11,86 @@
   --nova-card: #FFFFFF;
 }
 
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
 body {
   background-color: #F5F6FA;
   color: #1E1B39;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-  overflow-x: hidden;
+  overflow-x: clip;
+  overscroll-behavior-y: none;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
 }
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
 
-/* Scrollbar sutil NOVA */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* Safe-area utilities para iPhone, iPad e Android com barra de gestos */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
-::-webkit-scrollbar-track {
-  background: #ECEEF5;
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-::-webkit-scrollbar-thumb {
-  background: #C4C8D8;
-  border-radius: 9999px;
+.pl-safe {
+  padding-left: env(safe-area-inset-left, 0px);
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #6C5CE7;
+.pr-safe {
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+.mb-safe {
+  margin-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Ocultar scrollbar mantendo rolagem horizontal por toque em abas/chips */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Evita zoom automático indesejado no Safari iOS / Chrome Mobile ao focar campos */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Scrollbar sutil NOVA para Tablet/Desktop */
+@media (min-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #ECEEF5;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #C4C8D8;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #6C5CE7;
+  }
 }

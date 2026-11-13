@@ -451,9 +451,11 @@ export function NovaPlatformApp({
   >("BASE");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Layout Responsivo e Menu Lateral Compacto/Expansível
+  // Layout Responsivo (Celular, Tablet e Desktop)
   const [sidebarCompact, setSidebarCompact] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [showQuickActionSheet, setShowQuickActionSheet] = useState(false);
   const [gestaoExpanded, setGestaoExpanded] = useState(true);
   const [compromissosExpanded, setCompromissosExpanded] = useState(false);
   const [planningExpanded, setPlanningExpanded] = useState(false);
@@ -729,8 +731,10 @@ export function NovaPlatformApp({
     const ws = newWsId ?? workspaceId;
     setActiveRoute(route);
     setMobileMenuOpen(false);
+    setShowQuickActionSheet(false);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", `/app/${ws}/${route}`);
+      window.scrollTo({ top: 0, behavior: "smooth" });
     }
   };
 
@@ -1411,12 +1415,68 @@ export function NovaPlatformApp({
   );
 
   return (
-    <div className="flex min-h-screen bg-[#F5F6FA] pb-16 text-[#1E1B39] lg:pb-0">
+    <div className="flex min-h-[100dvh] bg-[#F5F6FA] pb-24 text-[#1E1B39] md:pb-0">
       {/* =====================================================================
-          SIDEBAR OFICIAL NOVA — PADRÃO GLOBAL PREDICTIONS (VISUAL CLARO + ROXO)
+          RAIL VERTICAL PARA TABLET RETRATO (768px–1023px | iPad & Android Tablet)
+         ===================================================================== */}
+      <aside className="sticky top-0 hidden h-[100dvh] w-20 shrink-0 flex-col items-center justify-between border-r border-slate-200/80 bg-white py-3 md:flex lg:hidden">
+        <div className="flex w-full flex-col items-center gap-2 px-2">
+          <button
+            onClick={() => setMobileMenuOpen(true)}
+            title="Abrir todos os módulos"
+            className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-[#6C5CE7] to-[#5849BE] font-black text-white shadow-sm active:scale-95"
+          >
+            N
+          </button>
+
+          <nav className="no-scrollbar mt-1 flex max-h-[calc(100dvh-140px)] w-full flex-col items-center gap-1 overflow-y-auto">
+            {[
+              { key: "visao-geral" as NovaRouteKey, label: "Início", icon: LayoutDashboard, match: (r: string) => r === "visao-geral" },
+              { key: "contas" as NovaRouteKey, label: "Contas", icon: Wallet, match: (r: string) => r === "contas" },
+              { key: "movimentacoes" as NovaRouteKey, label: "Extrato", icon: Receipt, match: (r: string) => r === "movimentacoes" },
+              { key: "contas-a-pagar" as NovaRouteKey, label: "Pagar/Rec", icon: CalendarClock, match: (r: string) => r === "contas-a-pagar" || r === "contas-a-receber" },
+              { key: "fluxo-de-caixa" as NovaRouteKey, label: "Fluxo", icon: LineChart, match: (r: string) => r === "fluxo-de-caixa" },
+              { key: "planejamento" as NovaRouteKey, label: "Planejar", icon: Compass, match: (r: string) => r.startsWith("planejamento") && r !== "planejamento/metas" },
+              { key: "reservas" as NovaRouteKey, label: "Reservas", icon: Shield, match: (r: string) => r === "reservas" || r === "planejamento/metas" },
+              { key: "investimentos" as NovaRouteKey, label: "Investir", icon: Layers, match: (r: string) => r === "investimentos" || r === "simulacoes" },
+              { key: "inteligencia" as NovaRouteKey, label: "IA & Open", icon: Sparkles, match: (r: string) => r.startsWith("inteligencia") || r.startsWith("integracoes") },
+              { key: "relatorios" as NovaRouteKey, label: "DRE/Rel", icon: FileBarChart2, match: (r: string) => r === "relatorios" },
+              { key: "configuracoes" as NovaRouteKey, label: "Admin", icon: Settings, match: (r: string) => r === "configuracoes" || r === "auditoria" },
+            ].map((item) => {
+              const Icon = item.icon;
+              const active = item.match(activeRoute);
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => navigateRoute(item.key)}
+                  className={`flex w-full flex-col items-center gap-1 rounded-xl px-1 py-2 text-[10px] font-bold transition ${
+                    active
+                      ? "bg-[#6C5CE7] text-white shadow-xs"
+                      : "text-slate-500 hover:bg-[#EFEFFD]/70 hover:text-[#6C5CE7]"
+                  }`}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
+        <button
+          onClick={() => setMobileMenuOpen(true)}
+          title="Expandir menu completo"
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-[#F5F6FA] text-slate-600 hover:text-[#6C5CE7]"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+      </aside>
+
+      {/* =====================================================================
+          SIDEBAR OFICIAL NOVA — TABLET PAISAGEM & DESKTOP (>=1024px)
          ===================================================================== */}
       <aside
-        className={`hidden shrink-0 flex-col border-r border-slate-200/80 bg-white transition-all duration-200 lg:flex ${
+        className={`sticky top-0 hidden h-[100dvh] shrink-0 flex-col border-r border-slate-200/80 bg-white transition-all duration-200 lg:flex ${
           sidebarCompact ? "w-20" : "w-64"
         }`}
       >
@@ -1474,31 +1534,102 @@ export function NovaPlatformApp({
         )}
       </aside>
 
-      {/* Drawer Mobile */}
+      {/* Drawer Completo para Celular e Tablet */}
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 flex lg:hidden">
           <div
-            className="fixed inset-0 bg-[#1E1B39]/40 backdrop-blur-xs"
+            className="fixed inset-0 bg-[#1E1B39]/45 backdrop-blur-xs"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <div className="relative z-10 flex w-72 flex-col bg-white shadow-2xl">
+          <div className="pt-safe pb-safe relative z-10 flex h-[100dvh] w-[86vw] max-w-xs flex-col bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-100 p-4">
               <div className="flex items-center gap-2.5">
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#6C5CE7] font-black text-white">
                   N
                 </div>
-                <span className="text-base font-extrabold text-[#1E1B39]">
-                  NOVA
-                </span>
+                <div>
+                  <span className="text-base font-extrabold text-[#1E1B39]">
+                    NOVA
+                  </span>
+                  <p className="text-[11px] text-slate-500">
+                    {activeWorkspace.name}
+                  </p>
+                </div>
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
-                className="rounded-lg p-1.5 text-slate-500"
+                aria-label="Fechar menu"
+                className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F5F6FA] text-slate-600"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
+
+            {/* Seletor Rápido de Ambiente PF/PJ no Drawer Mobile/Tablet */}
+            <div className="border-b border-slate-100 bg-[#F5F6FA]/70 px-3 py-2.5">
+              <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                <span>Ambiente Ativo</span>
+                <a
+                  href="/onboarding"
+                  className="font-bold text-[#6C5CE7] hover:underline"
+                >
+                  + Novo Ambiente
+                </a>
+              </div>
+              <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                {workspaces.map((ws) => {
+                  const active = ws.id === activeWorkspace.id;
+                  return (
+                    <button
+                      key={ws.id}
+                      onClick={() => {
+                        setWorkspaceId(ws.id);
+                        setTxAccountId("");
+                        setSettleAccountId("");
+                        navigateRoute(activeRoute, ws.id);
+                      }}
+                      className={`inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-bold transition ${
+                        active
+                          ? "bg-[#6C5CE7] text-white shadow-xs"
+                          : "border border-slate-200 bg-white text-slate-600"
+                      }`}
+                    >
+                      {ws.type === "BUSINESS" ? (
+                        <Building2 className="h-3.5 w-3.5 shrink-0" />
+                      ) : (
+                        <User className="h-3.5 w-3.5 shrink-0" />
+                      )}
+                      <span className="truncate">
+                        {ws.type === "BUSINESS" ? "Empresarial" : "Pessoal"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {renderSidebarNav(false)}
+
+            {/* Rodapé do Drawer Mobile/Tablet com Perfil e Logout */}
+            <div className="border-t border-slate-100 p-3 text-xs">
+              <div className="flex items-center justify-between gap-2 rounded-xl bg-[#F5F6FA] px-3 py-2">
+                <div className="min-w-0">
+                  <div className="truncate font-bold text-[#1E1B39]">
+                    {currentUserInfo?.name || "Administrador NOVA"}
+                  </div>
+                  <div className="truncate text-[10px] text-slate-500">
+                    Papel: {currentRole} • {activeWorkspace.baseCurrency}
+                  </div>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="inline-flex min-h-[36px] shrink-0 items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  Sair
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1507,21 +1638,21 @@ export function NovaPlatformApp({
           CONTEÚDO PRINCIPAL (FUNDO CINZA SUAVE #F5F6FA + CARTÕES BRANCOS)
          ===================================================================== */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Topbar Oficial NOVA com Alternância Financeiro | Planejamento | Investimentos */}
-        <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 px-4 py-3 backdrop-blur sm:px-6">
-          <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3">
-            {/* Esquerda: Menu Mobile + Alternância Superior (Financeiro, Planejamento, Investimentos) + Seletor PF/PJ */}
-            <div className="flex flex-wrap items-center gap-2.5">
+        {/* Topbar Oficial NOVA Adaptativa para Celular, Tablet e Desktop */}
+        <header className="pt-safe sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 px-3 py-2.5 backdrop-blur sm:px-6 sm:py-3">
+          <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-2">
+            {/* Esquerda: Menu Mobile + Alternância PF/PJ compacta no celular + Pilares no Tablet/Desktop */}
+            <div className="flex min-w-0 items-center gap-2">
               <button
                 onClick={() => setMobileMenuOpen(true)}
-                className="rounded-xl border border-slate-200 bg-[#F5F6FA] p-2 text-[#1E1B39] lg:hidden"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-[#F5F6FA] text-[#1E1B39] active:scale-95 md:hidden"
                 aria-label="Abrir menu"
               >
-                <Menu className="h-4 w-4" />
+                <Menu className="h-5 w-5" />
               </button>
 
-              {/* Navegação Superior Oficial: Alternância entre Financeiro, Planejamento e Investimentos */}
-              <div className="inline-flex rounded-xl bg-[#F5F6FA] p-1 ring-1 ring-slate-200/80">
+              {/* Navegação Superior Oficial (Visível em Tablet & Desktop — no celular fica na Barra Inferior) */}
+              <div className="hidden rounded-xl bg-[#F5F6FA] p-1 ring-1 ring-slate-200/80 md:inline-flex">
                 {[
                   {
                     id: "FINANCEIRO",
@@ -1544,7 +1675,7 @@ export function NovaPlatformApp({
                     <button
                       key={tab.id}
                       onClick={() => navigateRoute(tab.target)}
-                      className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
                         active
                           ? "bg-[#6C5CE7] text-white shadow-xs"
                           : "text-slate-600 hover:text-[#6C5CE7]"
@@ -1556,7 +1687,7 @@ export function NovaPlatformApp({
                 })}
               </div>
 
-              {/* Seletor Pessoal vs Empresarial + Novo Ambiente */}
+              {/* Seletor Pessoal vs Empresarial (Compacto no Celular, Completo no Tablet/Desktop) */}
               <div className="inline-flex items-center rounded-xl bg-[#F5F6FA] p-1 ring-1 ring-slate-200/80">
                 {workspaces.map((ws) => {
                   const active = ws.id === activeWorkspace.id;
@@ -1569,18 +1700,21 @@ export function NovaPlatformApp({
                         setSettleAccountId("");
                         navigateRoute(activeRoute, ws.id);
                       }}
-                      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                      className={`inline-flex min-h-[32px] items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold transition sm:gap-1.5 sm:px-3 sm:py-1.5 ${
                         active
                           ? "bg-white text-[#6C5CE7] shadow-xs"
                           : "text-slate-500 hover:text-[#1E1B39]"
                       }`}
                     >
                       {ws.type === "BUSINESS" ? (
-                        <Building2 className="h-3.5 w-3.5 text-[#6C5CE7]" />
+                        <Building2 className="h-3.5 w-3.5 shrink-0 text-[#6C5CE7]" />
                       ) : (
-                        <User className="h-3.5 w-3.5 text-[#6C5CE7]" />
+                        <User className="h-3.5 w-3.5 shrink-0 text-[#6C5CE7]" />
                       )}
-                      <span>
+                      <span className="sm:hidden">
+                        {ws.type === "BUSINESS" ? "PJ" : "PF"}
+                      </span>
+                      <span className="hidden sm:inline">
                         {ws.type === "BUSINESS" ? "Empresarial" : "Pessoal"}
                       </span>
                     </button>
@@ -1589,14 +1723,14 @@ export function NovaPlatformApp({
                 <a
                   href="/onboarding"
                   title="Criar novo ambiente Pessoal (PF) ou Empresarial (PJ)"
-                  className="ml-1 inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold text-[#6C5CE7] transition hover:bg-[#EFEFFD]"
+                  className="ml-0.5 hidden items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-[#6C5CE7] transition hover:bg-[#EFEFFD] lg:inline-flex"
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Ambiente</span>
+                  <span>Ambiente</span>
                 </a>
               </div>
 
-              {/* Seletor de Horizonte (Incluindo Próximos 6 meses = 180d) */}
+              {/* Seletor de Horizonte no Desktop largo */}
               <div className="hidden items-center gap-1 rounded-xl bg-[#F5F6FA] p-1 text-xs ring-1 ring-slate-200/80 xl:inline-flex">
                 {[
                   { days: 30, label: "30 dias" },
@@ -1619,9 +1753,9 @@ export function NovaPlatformApp({
               </div>
             </div>
 
-            {/* Direita: Pesquisa, Homologação P01+P02+P03, Alertas e Ações */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative hidden md:block">
+            {/* Direita: Busca Touch, Alertas, Lançamento Rápido e Sair */}
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+              <div className="relative hidden lg:block">
                 <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
                 <input
                   type="text"
@@ -1633,8 +1767,21 @@ export function NovaPlatformApp({
               </div>
 
               <button
+                onClick={() => setMobileSearchOpen(!mobileSearchOpen)}
+                className={`flex h-10 w-10 items-center justify-center rounded-xl border transition lg:hidden ${
+                  mobileSearchOpen || searchQuery
+                    ? "border-[#6C5CE7] bg-[#EFEFFD] text-[#6C5CE7]"
+                    : "border-slate-200/80 bg-[#F5F6FA] text-[#1E1B39]"
+                }`}
+                aria-label="Pesquisar"
+                title="Pesquisar lançamentos"
+              >
+                <Search className="h-4 w-4" />
+              </button>
+
+              <button
                 onClick={() => navigateRoute("inteligencia/alertas")}
-                className="relative rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-2 text-[#1E1B39] hover:border-[#6C5CE7]/40"
+                className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200/80 bg-[#F5F6FA] text-[#1E1B39] hover:border-[#6C5CE7]/40 sm:h-9 sm:w-9"
                 title="Recomendações e Alertas"
               >
                 <Bell className="h-4 w-4" />
@@ -1646,6 +1793,14 @@ export function NovaPlatformApp({
               </button>
 
               <button
+                onClick={() => setShowQuickActionSheet(true)}
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-3 text-xs font-bold text-white shadow-xs transition hover:bg-[#5849BE] active:scale-95 md:hidden"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Ações</span>
+              </button>
+
+              <button
                 onClick={() => {
                   if (accounts.length === 0) {
                     setShowAccountModal(true);
@@ -1653,7 +1808,7 @@ export function NovaPlatformApp({
                     setShowTxModal(true);
                   }
                 }}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-[#5849BE]"
+                className="hidden items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-3.5 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-[#5849BE] md:inline-flex"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>
@@ -1666,10 +1821,89 @@ export function NovaPlatformApp({
               <button
                 onClick={handleLogout}
                 title="Encerrar sessão com segurança"
-                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700"
+                className="hidden items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 md:inline-flex"
               >
                 <LogOut className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Sair</span>
+                <span className="hidden lg:inline">Sair</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Barra Expansível de Busca para Celular e Tablet */}
+          {mobileSearchOpen && (
+            <div className="mx-auto mt-2.5 flex max-w-[1440px] items-center gap-2 lg:hidden">
+              <div className="relative flex-1">
+                <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Filtrar movimentações ou centro de custo..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    if (activeRoute !== "movimentacoes") {
+                      setActiveRoute("movimentacoes");
+                    }
+                  }}
+                  className="min-h-[42px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] py-2 pl-10 pr-8 text-sm text-[#1E1B39] focus:border-[#6C5CE7] focus:bg-white focus:outline-none"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-3 top-2.5 text-xs font-bold text-slate-400"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={() => setMobileSearchOpen(false)}
+                className="rounded-xl px-2.5 py-2 text-xs font-bold text-[#6C5CE7]"
+              >
+                Fechar
+              </button>
+            </div>
+          )}
+
+          {/* Faixa Deslizável de Horizonte para Celular & Tablet (<1280px) */}
+          <div className="no-scrollbar mx-auto mt-2 flex max-w-[1440px] items-center justify-between gap-2 overflow-x-auto xl:hidden">
+            <div className="flex shrink-0 items-center gap-1">
+              <span className="mr-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Horizonte:
+              </span>
+              {[
+                { days: 30, label: "30d" },
+                { days: 90, label: "90d" },
+                { days: 180, label: "6 meses" },
+                { days: 365, label: "12 meses" },
+              ].map((h) => (
+                <button
+                  key={h.days}
+                  onClick={() => setHorizonDays(h.days)}
+                  className={`rounded-lg px-2.5 py-1 text-[11px] font-bold whitespace-nowrap transition ${
+                    horizonDays === h.days
+                      ? "bg-[#EFEFFD] text-[#6C5CE7]"
+                      : "text-slate-500 hover:bg-[#F5F6FA]"
+                  }`}
+                >
+                  {h.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex shrink-0 items-center gap-1.5 text-[11px]">
+              <button
+                onClick={() => navigateRoute("inteligencia/assistente")}
+                className="inline-flex items-center gap-1 rounded-lg bg-[#EFEFFD]/80 px-2.5 py-1 font-bold whitespace-nowrap text-[#6C5CE7]"
+              >
+                <Bot className="h-3 w-3" />
+                Assistente IA
+              </button>
+              <button
+                onClick={() => navigateRoute("relatorios")}
+                className="inline-flex items-center gap-1 rounded-lg bg-[#F5F6FA] px-2.5 py-1 font-semibold whitespace-nowrap text-slate-600"
+              >
+                <FileBarChart2 className="h-3 w-3" />
+                {isPJ ? "DRE" : "Relatório"}
               </button>
             </div>
           </div>
@@ -1766,11 +2000,11 @@ export function NovaPlatformApp({
                   2. Patrimônio Líquido ("R$ 0,00" | Consolidado)
                   3. Projeção Financeira ("—" | Próximos 6 meses)
                  ============================================================= */}
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {/* Cartão 1: Saúde Financeira */}
                 <div
                   onClick={() => navigateRoute("inteligencia/diagnostico")}
-                  className="cursor-pointer rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs transition hover:border-[#6C5CE7]/50 hover:shadow-md"
+                  className="min-w-0 cursor-pointer rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs transition hover:border-[#6C5CE7]/50 hover:shadow-md sm:p-6"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -1800,7 +2034,7 @@ export function NovaPlatformApp({
                 {/* Cartão 2: Patrimônio Líquido */}
                 <div
                   onClick={() => navigateRoute("contas")}
-                  className="cursor-pointer rounded-2xl border border-[#6C5CE7]/25 bg-gradient-to-br from-[#6C5CE7] to-[#5849BE] p-6 text-white shadow-sm transition hover:shadow-md"
+                  className="min-w-0 cursor-pointer rounded-2xl border border-[#6C5CE7]/25 bg-gradient-to-br from-[#6C5CE7] to-[#5849BE] p-5 text-white shadow-sm transition hover:shadow-md sm:p-6"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold uppercase tracking-wider text-violet-100">
@@ -1810,10 +2044,10 @@ export function NovaPlatformApp({
                       <Wallet className="h-4 w-4" />
                     </span>
                   </div>
-                  <div className="mt-3 font-mono text-3xl font-black tabular-nums text-white">
+                  <div className="mt-3 font-mono text-2xl font-black tabular-nums text-white sm:text-3xl">
                     {formatBRL(netWorthCents)}
                   </div>
-                  <div className="mt-1.5 flex items-center justify-between text-xs text-violet-100">
+                  <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1 text-xs text-violet-100">
                     <span>Consolidado</span>
                     <span>
                       Caixa: {formatBRL(kpis.eligibleBalanceCents)} • Inv:{" "}
@@ -1825,7 +2059,7 @@ export function NovaPlatformApp({
                 {/* Cartão 3: Projeção Financeira */}
                 <div
                   onClick={() => navigateRoute("fluxo-de-caixa")}
-                  className="cursor-pointer rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs transition hover:border-[#6C5CE7]/50 hover:shadow-md"
+                  className="min-w-0 cursor-pointer rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs transition hover:border-[#6C5CE7]/50 hover:shadow-md sm:p-6 md:col-span-2 lg:col-span-1"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -1835,7 +2069,7 @@ export function NovaPlatformApp({
                       <LineChart className="h-4 w-4" />
                     </span>
                   </div>
-                  <div className="mt-3 font-mono text-3xl font-black tabular-nums text-[#1E1B39]">
+                  <div className="mt-3 font-mono text-2xl font-black tabular-nums text-[#1E1B39] sm:text-3xl">
                     {isZeroState
                       ? "—"
                       : formatBRL(kpis.projectedEndBalanceCents)}
@@ -2261,6 +2495,56 @@ export function NovaPlatformApp({
             </div>
           )}
 
+          {/* Sub-navegação Rápida Mobile para o Pilar Financeiro */}
+          {(activeRoute === "contas" ||
+            activeRoute === "movimentacoes" ||
+            activeRoute === "contas-a-pagar" ||
+            activeRoute === "contas-a-receber" ||
+            activeRoute === "reservas") && (
+            <div className="no-scrollbar -mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-1 md:hidden">
+              {[
+                { key: "contas" as NovaRouteKey, label: "Contas", icon: Wallet },
+                {
+                  key: "movimentacoes" as NovaRouteKey,
+                  label: "Movimentações",
+                  icon: ArrowLeftRight,
+                },
+                {
+                  key: "contas-a-pagar" as NovaRouteKey,
+                  label: "A Pagar",
+                  icon: CalendarClock,
+                },
+                {
+                  key: "contas-a-receber" as NovaRouteKey,
+                  label: "A Receber",
+                  icon: Receipt,
+                },
+                {
+                  key: "reservas" as NovaRouteKey,
+                  label: "Cofres",
+                  icon: Shield,
+                },
+              ].map((pill) => {
+                const PillIcon = pill.icon;
+                const active = activeRoute === pill.key;
+                return (
+                  <button
+                    key={pill.key}
+                    onClick={() => navigateRoute(pill.key)}
+                    className={`inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold whitespace-nowrap transition ${
+                      active
+                        ? "bg-[#6C5CE7] text-white shadow-sm"
+                        : "border border-slate-200/80 bg-white text-slate-600"
+                    }`}
+                  >
+                    <PillIcon className="h-3.5 w-3.5" />
+                    <span>{pill.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* =================================================================
               TELA 2: CONTAS E CARTEIRAS (P01)
              ================================================================= */}
@@ -2278,7 +2562,7 @@ export function NovaPlatformApp({
                 </div>
                 <button
                   onClick={() => setShowAccountModal(true)}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-[#5849BE]"
+                  className="inline-flex min-h-[42px] items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-[#5849BE]"
                 >
                   <Plus className="h-4 w-4" />
                   Nova Conta
@@ -2286,7 +2570,7 @@ export function NovaPlatformApp({
               </div>
 
               {accounts.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center sm:p-12">
                   <Wallet className="mx-auto h-8 w-8 text-[#6C5CE7]" />
                   <h3 className="mt-2 text-sm font-bold text-[#1E1B39]">
                     Cadastre sua primeira conta
@@ -2297,13 +2581,13 @@ export function NovaPlatformApp({
                   </p>
                   <button
                     onClick={() => setShowAccountModal(true)}
-                    className="mt-4 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
+                    className="mt-4 min-h-[42px] rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
                   >
                     Criar Conta Agora
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {accounts.map((acc) => (
                     <div
                       key={acc.id}
@@ -2376,11 +2660,11 @@ export function NovaPlatformApp({
                     TRANSFER_IN) sem inflar receitas ou despesas consolidadas.
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex w-full flex-wrap gap-2 sm:w-auto">
                   <button
                     onClick={() => setShowTransferModal(true)}
                     disabled={accounts.length < 2}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#6C5CE7] bg-white px-3.5 py-2 text-xs font-bold text-[#6C5CE7] disabled:opacity-40"
+                    className="inline-flex min-h-[42px] flex-1 items-center justify-center gap-1.5 rounded-xl border border-[#6C5CE7] bg-white px-3.5 py-2 text-xs font-bold text-[#6C5CE7] disabled:opacity-40 sm:flex-none"
                   >
                     <ArrowLeftRight className="h-3.5 w-3.5" />
                     Transferência entre Contas
@@ -2388,7 +2672,7 @@ export function NovaPlatformApp({
                   <button
                     onClick={() => setShowTxModal(true)}
                     disabled={accounts.length === 0}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white disabled:opacity-40"
+                    className="inline-flex min-h-[42px] flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white disabled:opacity-40 sm:flex-none"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     Registrar Receita / Despesa
@@ -2397,7 +2681,128 @@ export function NovaPlatformApp({
               </div>
 
               <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xs">
-                <div className="overflow-x-auto">
+                {/* Versão Celular (<768px): Lista de Cartões Touch sem rolagem lateral */}
+                <div className="divide-y divide-slate-100 md:hidden">
+                  {filteredTransactions.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-slate-500">
+                      Nenhuma movimentação registrada neste workspace.
+                    </div>
+                  ) : (
+                    filteredTransactions.map((tx) => {
+                      const isPositive =
+                        tx.kind === "INCOME" || tx.kind === "TRANSFER_IN";
+                      return (
+                        <div
+                          key={tx.id}
+                          className={`space-y-2.5 p-4 ${
+                            tx.status === "CANCELED"
+                              ? "opacity-50 line-through"
+                              : ""
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                                <span className="font-mono font-semibold text-slate-600">
+                                  {formatDateBR(tx.occurredOn)}
+                                </span>
+                                <span>•</span>
+                                <span className="truncate font-medium">
+                                  {tx.account?.name || "Conta"}
+                                </span>
+                              </div>
+                              <div className="mt-0.5 text-sm font-extrabold text-[#1E1B39]">
+                                {tx.description}
+                              </div>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <div
+                                className={`font-mono text-sm font-black tabular-nums ${
+                                  isPositive
+                                    ? "text-emerald-700"
+                                    : "text-rose-700"
+                                }`}
+                              >
+                                {isPositive ? "+" : "-"}
+                                {formatBRL(tx.amountCents)}
+                              </div>
+                              <span
+                                className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                  tx.status === "SETTLED"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : tx.status === "PENDING"
+                                    ? "bg-amber-100 text-amber-900"
+                                    : "bg-slate-200 text-slate-600"
+                                }`}
+                              >
+                                {tx.status}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                            <div className="flex flex-wrap gap-1.5 text-[10px]">
+                              <span className="rounded-lg bg-[#EFEFFD] px-2 py-0.5 font-mono font-bold text-[#6C5CE7]">
+                                {tx.kind}
+                              </span>
+                              {tx.categoryName && (
+                                <span className="rounded bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
+                                  {tx.categoryName}
+                                </span>
+                              )}
+                              {tx.counterpartyName && (
+                                <span className="rounded bg-[#EFEFFD] px-2 py-0.5 font-medium text-[#6C5CE7]">
+                                  {tx.counterpartyName}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {tx.status === "PENDING" && (
+                                <button
+                                  onClick={() =>
+                                    executeAction(
+                                      {
+                                        action: "SETTLE_TRANSACTION",
+                                        transactionId: tx.id,
+                                      },
+                                      "Lançamento liquidado com sucesso."
+                                    )
+                                  }
+                                  className="min-h-[34px] rounded-xl bg-[#6C5CE7] px-3 py-1.5 text-xs font-bold text-white"
+                                >
+                                  Liquidar
+                                </button>
+                              )}
+                              {tx.status !== "CANCELED" && (
+                                <button
+                                  onClick={() =>
+                                    executeAction(
+                                      {
+                                        action: "CANCEL_TRANSACTION",
+                                        transactionId: tx.id,
+                                        reason:
+                                          "Estorno/cancelamento contábil com preservação de histórico",
+                                      },
+                                      "Lançamento cancelado (histórico preservado)."
+                                    )
+                                  }
+                                  className="inline-flex min-h-[34px] items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-800"
+                                >
+                                  <Ban className="h-3.5 w-3.5" />
+                                  Estornar
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Versão Tablet & Desktop (>=768px): Tabela Analítica Completa */}
+                <div className="hidden overflow-x-auto md:block">
                   <table className="w-full text-left text-xs">
                     <thead className="border-b border-slate-200/80 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                       <tr>
@@ -2567,7 +2972,7 @@ export function NovaPlatformApp({
                     );
                     if (ok) setRecTitle("");
                   }}
-                  className="mt-4 grid grid-cols-1 gap-3 text-xs sm:grid-cols-7"
+                  className="mt-4 grid grid-cols-1 gap-2.5 text-xs sm:grid-cols-2 lg:grid-cols-7"
                 >
                   <input
                     type="text"
@@ -2575,14 +2980,14 @@ export function NovaPlatformApp({
                     placeholder="Ex: Salário / Aluguel / AWS"
                     value={recTitle}
                     onChange={(e) => setRecTitle(e.target.value)}
-                    className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 sm:col-span-2"
+                    className="min-h-[42px] rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 sm:col-span-2"
                   />
                   <select
                     value={recKind}
                     onChange={(e) =>
                       setRecKind(e.target.value as "INCOME" | "EXPENSE")
                     }
-                    className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-2"
+                    className="min-h-[42px] rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-2"
                   >
                     <option value="EXPENSE">Despesa Fixa</option>
                     <option value="INCOME">Receita Recorrente</option>
@@ -2594,7 +2999,7 @@ export function NovaPlatformApp({
                         e.target.value as "MONTHLY" | "WEEKLY" | "YEARLY"
                       )
                     }
-                    className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-2"
+                    className="min-h-[42px] rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-2"
                   >
                     <option value="MONTHLY">Mensal</option>
                     <option value="WEEKLY">Semanal</option>
@@ -2604,20 +3009,21 @@ export function NovaPlatformApp({
                     type="date"
                     value={recNextDate}
                     onChange={(e) => setRecNextDate(e.target.value)}
-                    className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-2"
+                    className="min-h-[42px] rounded-xl border border-slate-200 bg-[#F5F6FA] px-2.5 py-2"
                   />
                   <input
                     type="text"
+                    inputMode="decimal"
                     required
                     placeholder="Valor (R$)"
                     value={recAmountDecimal}
                     onChange={(e) => setRecAmountDecimal(e.target.value)}
-                    className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
+                    className="min-h-[42px] rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                   />
                   <button
                     type="submit"
                     disabled={accounts.length === 0}
-                    className="rounded-xl bg-[#6C5CE7] px-3 py-2 font-bold text-white disabled:opacity-40"
+                    className="min-h-[42px] rounded-xl bg-[#6C5CE7] px-3 py-2 font-bold text-white disabled:opacity-40 sm:col-span-2 lg:col-span-1"
                   >
                     + Recorrência
                   </button>
@@ -2929,7 +3335,7 @@ export function NovaPlatformApp({
                     parcial ou integral vinculada atomicamente ao Ledger P01.
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex w-full flex-wrap gap-2 sm:w-auto">
                   <button
                     onClick={() =>
                       navigateRoute(
@@ -2938,7 +3344,7 @@ export function NovaPlatformApp({
                           : "contas-a-pagar"
                       )
                     }
-                    className="rounded-xl border border-slate-200 bg-[#F5F6FA] px-3.5 py-2 text-xs font-bold text-[#1E1B39]"
+                    className="min-h-[42px] flex-1 rounded-xl border border-slate-200 bg-[#F5F6FA] px-3.5 py-2 text-xs font-bold text-[#1E1B39] sm:flex-none"
                   >
                     Alternar para{" "}
                     {activeRoute === "contas-a-pagar"
@@ -2954,7 +3360,7 @@ export function NovaPlatformApp({
                       );
                       setShowObligationModal(true);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
+                    className="inline-flex min-h-[42px] flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white sm:flex-none"
                   >
                     <Plus className="h-4 w-4" />
                     {activeRoute === "contas-a-receber"
@@ -2965,7 +3371,122 @@ export function NovaPlatformApp({
               </div>
 
               <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xs">
-                <div className="overflow-x-auto">
+                {/* Versão Celular (<768px): Cartões de Parcelas e Baixa Rápida */}
+                <div className="divide-y divide-slate-100 md:hidden">
+                  {(activeRoute === "contas-a-pagar"
+                    ? payableInstallments
+                    : receivableInstallments
+                  ).length === 0 ? (
+                    <div className="p-8 text-center text-xs text-slate-500">
+                      Nenhum compromisso registrado nesta visão.
+                    </div>
+                  ) : (
+                    (activeRoute === "contas-a-pagar"
+                      ? payableInstallments
+                      : receivableInstallments
+                    ).map((inst) => (
+                      <div key={inst.id} className="space-y-3 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                              <span className="font-mono font-bold text-[#1E1B39]">
+                                Vence {formatDateBR(inst.dueOn)}
+                              </span>
+                              <span>•</span>
+                              <span className="font-mono font-semibold text-[#6C5CE7]">
+                                Parcela {inst.number}/{inst.totalInstallments}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 text-sm font-extrabold text-[#1E1B39]">
+                              {inst.obligationTitle}
+                            </div>
+                            <div className="mt-0.5 flex flex-wrap gap-1.5 text-[11px] text-slate-500">
+                              {inst.counterparty && (
+                                <span className="font-medium text-slate-700">
+                                  {inst.counterparty}
+                                </span>
+                              )}
+                              {inst.categoryName && (
+                                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px]">
+                                  {inst.categoryName}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <span
+                            className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                              inst.derivedStatus === "PAID"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : inst.derivedStatus === "PARTIAL"
+                                ? "bg-[#EFEFFD] text-[#6C5CE7]"
+                                : inst.derivedStatus === "OVERDUE"
+                                ? "bg-rose-100 text-rose-800"
+                                : "bg-amber-100 text-amber-900"
+                            }`}
+                          >
+                            {inst.derivedStatus}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 rounded-xl bg-[#F5F6FA] p-3 text-xs">
+                          <div>
+                            <span className="block text-[10px] text-slate-500">
+                              Valor Original
+                            </span>
+                            <span className="font-mono font-semibold text-slate-700">
+                              {formatBRL(inst.amountCents)}
+                            </span>
+                          </div>
+                          <div className="text-right">
+                            <span className="block text-[10px] text-slate-500">
+                              Saldo em Aberto
+                            </span>
+                            <span className="font-mono text-sm font-black text-[#1E1B39]">
+                              {formatBRL(inst.outstandingCents)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {inst.outstandingCents > 0 &&
+                          inst.derivedStatus !== "CANCELED" && (
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  setSettlementTarget(inst);
+                                  setSettleAmountDecimal(
+                                    centsToDecimalString(inst.outstandingCents)
+                                  );
+                                }}
+                                className="min-h-[40px] flex-1 rounded-xl bg-[#6C5CE7] px-3 py-2 text-xs font-bold text-white"
+                              >
+                                Registrar Baixa
+                              </button>
+                              <button
+                                onClick={() =>
+                                  executeAction(
+                                    {
+                                      action: "CANCEL_OBLIGATION",
+                                      obligationId: inst.obligationId,
+                                      reason:
+                                        "Compromisso cancelado pelo usuário",
+                                    },
+                                    "Compromisso e parcelas em aberto cancelados."
+                                  )
+                                }
+                                className="min-h-[40px] rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-800"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          )}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Versão Tablet & Desktop (>=768px): Tabela Completa */}
+                <div className="hidden overflow-x-auto md:block">
                   <table className="w-full text-left text-xs">
                     <thead className="border-b border-slate-200/80 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                       <tr>
@@ -3091,7 +3612,7 @@ export function NovaPlatformApp({
             <div className="space-y-6">
               {/* Sub-navegação de Planejamento */}
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs">
-                <div className="flex flex-wrap gap-1.5">
+                <div className="no-scrollbar -mx-1 flex w-full flex-nowrap gap-1.5 overflow-x-auto px-1 pb-1 sm:mx-0 sm:w-auto sm:flex-wrap sm:pb-0">
                   {[
                     {
                       key: "planejamento" as NovaRouteKey,
@@ -3124,7 +3645,7 @@ export function NovaPlatformApp({
                       <button
                         key={tab.key}
                         onClick={() => navigateRoute(tab.key)}
-                        className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition ${
+                        className={`inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold whitespace-nowrap transition ${
                           activeRoute === tab.key
                             ? "bg-[#6C5CE7] text-white"
                             : "bg-[#F5F6FA] text-slate-600 hover:bg-[#EFEFFD] hover:text-[#6C5CE7]"
@@ -3149,20 +3670,21 @@ export function NovaPlatformApp({
                       "Margem de segurança atualizada."
                     );
                   }}
-                  className="flex items-center gap-2 text-xs"
+                  className="flex w-full flex-wrap items-center gap-2 text-xs sm:w-auto"
                 >
                   <span className="font-semibold text-slate-600">
                     Margem de Segurança (B): R$
                   </span>
                   <input
                     type="text"
+                    inputMode="decimal"
                     value={bufferInputDecimal}
                     onChange={(e) => setBufferInputDecimal(e.target.value)}
-                    className="w-28 rounded-lg border border-slate-200 bg-[#F5F6FA] px-2.5 py-1 font-mono text-xs font-bold text-[#1E1B39]"
+                    className="min-h-[38px] w-28 flex-1 rounded-lg border border-slate-200 bg-[#F5F6FA] px-2.5 py-1.5 font-mono text-xs font-bold text-[#1E1B39] sm:flex-none"
                   />
                   <button
                     type="submit"
-                    className="rounded-lg bg-[#6C5CE7] px-3 py-1 font-bold text-white"
+                    className="min-h-[38px] rounded-lg bg-[#6C5CE7] px-3.5 py-1.5 font-bold text-white"
                   >
                     Salvar
                   </button>
@@ -3324,7 +3846,7 @@ export function NovaPlatformApp({
 
               {/* Subtela: Cenários */}
               {activeRoute === "planejamento/cenarios" && (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                   {scenarios.map((sc) => (
                     <div
                       key={sc.id}
@@ -3565,7 +4087,64 @@ export function NovaPlatformApp({
                   Série Diária do Fluxo de Caixa e Calendário ({horizonDays}{" "}
                   dias • Cenário {scenarioKind})
                 </h3>
-                <div className="mt-4 max-h-96 overflow-y-auto">
+
+                {/* Versão Celular (<768px): Cartões Diários sem rolagem horizontal */}
+                <div className="mt-3 max-h-96 divide-y divide-slate-100 overflow-y-auto md:hidden">
+                  {forecastSeries.map((pt) => (
+                    <div
+                      key={pt.date}
+                      className={`space-y-1.5 py-3 text-xs ${
+                        pt.isNegative
+                          ? "rounded-xl bg-rose-50 px-3"
+                          : pt.isCritical
+                          ? "rounded-xl bg-amber-50/70 px-3"
+                          : ""
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono font-extrabold text-[#1E1B39]">
+                          {formatDateBR(pt.date)}
+                        </span>
+                        {pt.isNegative ? (
+                          <span className="rounded bg-rose-200 px-2 py-0.5 text-[10px] font-bold text-rose-900">
+                            Saldo Negativo
+                          </span>
+                        ) : pt.isCritical ? (
+                          <span className="rounded bg-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-900">
+                            Abaixo da Margem
+                          </span>
+                        ) : (
+                          <span className="text-[11px] font-semibold text-emerald-700">
+                            Normal
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[11px]">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-slate-500">
+                            Inic: {formatBRL(pt.startingCents)}
+                          </span>
+                          {pt.inboundCents > 0 && (
+                            <span className="font-bold text-emerald-700">
+                              +{formatBRL(pt.inboundCents)}
+                            </span>
+                          )}
+                          {pt.outboundCents > 0 && (
+                            <span className="font-bold text-amber-800">
+                              -{formatBRL(pt.outboundCents)}
+                            </span>
+                          )}
+                        </div>
+                        <span className="font-extrabold text-[#6C5CE7]">
+                          Final: {formatBRL(pt.endingCents)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Versão Tablet & Desktop (>=768px): Tabela Analítica */}
+                <div className="mt-4 hidden max-h-96 overflow-y-auto md:block">
                   <table className="w-full text-left text-xs">
                     <thead className="border-b border-slate-200/80 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                       <tr>
@@ -3686,7 +4265,7 @@ export function NovaPlatformApp({
               />
 
               {/* Resumo de Cobertura */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-2xl border border-slate-200/80 bg-white p-4">
                   <span className="text-xs text-slate-500">
                     Saldo Bancário Elegível (S)
@@ -3726,7 +4305,7 @@ export function NovaPlatformApp({
               </div>
 
               {/* Lista de Cofres */}
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {reserves.map((res) => (
                   <div
                     key={res.id}
@@ -4018,7 +4597,7 @@ export function NovaPlatformApp({
               </div>
 
               {/* 4 KPIs Executivos do Período */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs">
                   <span className="text-xs font-semibold text-slate-500">
                     {isPJ ? "Receita Operacional Realizada" : "Receitas Realizadas"}
@@ -4072,7 +4651,85 @@ export function NovaPlatformApp({
                 <h3 className="text-sm font-extrabold text-[#1E1B39]">
                   Demonstrativo Mensal — Realizado vs. Projetado (Ledger + Parcelas + Recorrências Ativas)
                 </h3>
-                <div className="mt-4 overflow-x-auto">
+
+                {/* Versão Celular (<768px): Cartões de Competência Mensal */}
+                <div className="mt-4 space-y-3 md:hidden">
+                  {(state.analytics?.monthlySummary ?? []).length === 0 ? (
+                    <p className="py-4 text-center text-xs text-slate-400">
+                      Nenhuma movimentação ou projeção registrada até o momento.
+                    </p>
+                  ) : (
+                    (state.analytics?.monthlySummary ?? []).map((row) => {
+                      const openNet =
+                        row.projectedIncomeCents - row.projectedExpenseCents;
+                      return (
+                        <div
+                          key={row.period}
+                          className="space-y-2 rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-3.5 text-xs"
+                        >
+                          <div className="flex items-center justify-between border-b border-slate-200/70 pb-2">
+                            <span className="font-mono text-sm font-extrabold text-[#1E1B39]">
+                              Competência {row.period}
+                            </span>
+                            <span
+                              className={`font-mono font-black ${
+                                row.netProjectedCents >= 0
+                                  ? "text-[#6C5CE7]"
+                                  : "text-rose-700"
+                              }`}
+                            >
+                              Proj: {formatBRL(row.netProjectedCents)}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+                            <div>
+                              <span className="block font-sans text-[10px] text-slate-500">
+                                Receita Realizada
+                              </span>
+                              <span className="font-bold text-emerald-700">
+                                +{formatBRL(row.realizedIncomeCents)}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="block font-sans text-[10px] text-slate-500">
+                                Despesa Realizada
+                              </span>
+                              <span className="font-bold text-rose-700">
+                                -{formatBRL(row.realizedExpenseCents)}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="block font-sans text-[10px] text-slate-500">
+                                Resultado Realizado
+                              </span>
+                              <span
+                                className={`font-bold ${
+                                  row.netRealizedCents >= 0
+                                    ? "text-emerald-700"
+                                    : "text-rose-700"
+                                }`}
+                              >
+                                {formatBRL(row.netRealizedCents)}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="block font-sans text-[10px] text-slate-500">
+                                Aberto / Recorrente
+                              </span>
+                              <span className="font-semibold text-slate-700">
+                                {openNet >= 0 ? "+" : ""}
+                                {formatBRL(openNet)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Versão Tablet & Desktop (>=768px): Tabela Completa */}
+                <div className="mt-4 hidden overflow-x-auto md:block">
                   <table className="w-full text-left text-xs">
                     <thead className="border-b border-slate-200 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                       <tr>
@@ -4532,58 +5189,271 @@ export function NovaPlatformApp({
       </div>
 
       {/* =====================================================================
-          BARRA DE NAVEGAÇÃO INFERIOR MOBILE (VERSÃO CELULAR ADAPTADA)
+          BARRA DE NAVEGAÇÃO INFERIOR NATIVA PARA CELULAR (<768px | SAFE AREA)
+          Em Tablets (>=768px) a navegação usa o Rail Vertical dedicado à esquerda
          ===================================================================== */}
-      <nav className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t border-slate-200 bg-white px-2 py-2 lg:hidden">
-        {[
-          {
-            key: "visao-geral" as NovaRouteKey,
-            label: "Início",
-            icon: LayoutDashboard,
-          },
-          {
-            key: "contas" as NovaRouteKey,
-            label: "Financeiro",
-            icon: Wallet,
-          },
-          {
-            key: "planejamento" as NovaRouteKey,
-            label: "Planejar",
-            icon: Compass,
-          },
-          {
-            key: "investimentos" as NovaRouteKey,
-            label: "Investir",
-            icon: Layers,
-          },
-          {
-            key: "simulacoes" as NovaRouteKey,
-            label: "Simular",
-            icon: Calculator,
-          },
-        ].map((item) => {
-          const Icon = item.icon;
-          const active = activeRoute === item.key;
-          return (
-            <button
-              key={item.key}
-              onClick={() => navigateRoute(item.key)}
-              className={`flex flex-col items-center gap-0.5 rounded-xl px-3 py-1 text-[10px] font-bold ${
-                active ? "text-[#6C5CE7]" : "text-slate-500"
-              }`}
-            >
-              <Icon className="h-4 w-4" />
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
+      <nav className="pb-safe fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t border-slate-200/90 bg-white/95 px-2 pt-1.5 backdrop-blur-md md:hidden">
+        <button
+          onClick={() => navigateRoute("visao-geral")}
+          className={`flex min-h-[46px] flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1 text-[10px] font-bold transition ${
+            activeRoute === "visao-geral" ? "text-[#6C5CE7]" : "text-slate-500"
+          }`}
+        >
+          <LayoutDashboard className="h-5 w-5" />
+          <span>Início</span>
+        </button>
+
+        <button
+          onClick={() =>
+            navigateRoute(
+              accounts.length === 0 ? "contas" : "movimentacoes"
+            )
+          }
+          className={`flex min-h-[46px] flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1 text-[10px] font-bold transition ${
+            activeRoute === "contas" ||
+            activeRoute === "movimentacoes" ||
+            activeRoute === "contas-a-pagar" ||
+            activeRoute === "contas-a-receber" ||
+            activeRoute === "reservas"
+              ? "text-[#6C5CE7]"
+              : "text-slate-500"
+          }`}
+        >
+          <Wallet className="h-5 w-5" />
+          <span>Financeiro</span>
+        </button>
+
+        <div className="flex flex-1 flex-col items-center justify-center">
+          <button
+            onClick={() => setShowQuickActionSheet(true)}
+            aria-label="Lançamento rápido"
+            className="-mt-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#6C5CE7] to-[#4834D4] text-white shadow-lg shadow-[#6C5CE7]/35 active:scale-95"
+          >
+            <Plus className="h-6 w-6" />
+          </button>
+          <span className="mt-0.5 text-[10px] font-extrabold text-[#6C5CE7]">
+            Lançar
+          </span>
+        </div>
+
+        <button
+          onClick={() => navigateRoute("planejamento")}
+          className={`flex min-h-[46px] flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1 text-[10px] font-bold transition ${
+            activeRoute.startsWith("planejamento") ||
+            activeRoute === "fluxo-de-caixa"
+              ? "text-[#6C5CE7]"
+              : "text-slate-500"
+          }`}
+        >
+          <Compass className="h-5 w-5" />
+          <span>Planejar</span>
+        </button>
+
+        <button
+          onClick={() => navigateRoute("investimentos")}
+          className={`flex min-h-[46px] flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1 text-[10px] font-bold transition ${
+            activeRoute === "investimentos" || activeRoute === "simulacoes"
+              ? "text-[#6C5CE7]"
+              : "text-slate-500"
+          }`}
+        >
+          <Layers className="h-5 w-5" />
+          <span>Investir</span>
+        </button>
       </nav>
 
       {/* =====================================================================
-          MODAIS DE OPERAÇÃO (CONTA, LANÇAMENTO, TRANSFERÊNCIA, OBRIGAÇÃO, BAIXA, COFRE)
+          BOTTOM SHEET DE AÇÕES RÁPIDAS MOBILE / TABLET (1 TOQUE)
+         ===================================================================== */}
+      {showQuickActionSheet && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-[#1E1B39]/55 backdrop-blur-sm sm:items-center sm:p-4"
+          onClick={() => setShowQuickActionSheet(false)}
+        >
+          <div
+            className="pb-safe max-h-[88dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200 sm:hidden" />
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-extrabold text-[#1E1B39]">
+                  Ações Rápidas • {activeWorkspace.name}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Escolha o que deseja registrar agora
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQuickActionSheet(false)}
+                className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F5F6FA] text-slate-600"
+                aria-label="Fechar"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-2.5 text-left text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowQuickActionSheet(false);
+                  if (accounts.length === 0) {
+                    setShowAccountModal(true);
+                  } else {
+                    setTxKind("INCOME");
+                    setShowTxModal(true);
+                  }
+                }}
+                className="flex flex-col gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3.5 transition active:scale-[0.98]"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600 text-white">
+                  <ArrowUpRight className="h-4 w-4" />
+                </span>
+                <div>
+                  <div className="font-extrabold text-[#1E1B39]">
+                    Nova Receita
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Entrada no caixa
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowQuickActionSheet(false);
+                  if (accounts.length === 0) {
+                    setShowAccountModal(true);
+                  } else {
+                    setTxKind("EXPENSE");
+                    setShowTxModal(true);
+                  }
+                }}
+                className="flex flex-col gap-2 rounded-2xl border border-rose-200 bg-rose-50/70 p-3.5 transition active:scale-[0.98]"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-600 text-white">
+                  <ArrowDownRight className="h-4 w-4" />
+                </span>
+                <div>
+                  <div className="font-extrabold text-[#1E1B39]">
+                    Nova Despesa
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Saída ou pagamento
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowQuickActionSheet(false);
+                  setObDirection("PAYABLE");
+                  setShowObligationModal(true);
+                }}
+                className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-[#F5F6FA] p-3.5 transition active:scale-[0.98]"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#EFEFFD] text-[#6C5CE7]">
+                  <CalendarClock className="h-4 w-4" />
+                </span>
+                <div>
+                  <div className="font-extrabold text-[#1E1B39]">
+                    Conta a Pagar / Receber
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    1 a 60 parcelas
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                disabled={accounts.length < 2}
+                onClick={() => {
+                  setShowQuickActionSheet(false);
+                  setShowTransferModal(true);
+                }}
+                className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-[#F5F6FA] p-3.5 transition active:scale-[0.98] disabled:opacity-45"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#EFEFFD] text-[#6C5CE7]">
+                  <ArrowLeftRight className="h-4 w-4" />
+                </span>
+                <div>
+                  <div className="font-extrabold text-[#1E1B39]">
+                    Transferência
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Entre contas próprias
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowQuickActionSheet(false);
+                  setShowAccountModal(true);
+                }}
+                className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-[#F5F6FA] p-3.5 transition active:scale-[0.98]"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#EFEFFD] text-[#6C5CE7]">
+                  <Wallet className="h-4 w-4" />
+                </span>
+                <div>
+                  <div className="font-extrabold text-[#1E1B39]">
+                    Cadastrar Conta
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Banco ou carteira
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowQuickActionSheet(false);
+                  setShowReserveModal(true);
+                }}
+                className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-[#F5F6FA] p-3.5 transition active:scale-[0.98]"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#EFEFFD] text-[#6C5CE7]">
+                  <Shield className="h-4 w-4" />
+                </span>
+                <div>
+                  <div className="font-extrabold text-[#1E1B39]">
+                    Criar Cofre
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Reserva virtual
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowQuickActionSheet(false);
+                navigateRoute("integracoes/importacoes");
+              }}
+              className="mt-3 flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl border border-[#6C5CE7]/30 bg-[#EFEFFD] px-4 py-2.5 text-xs font-bold text-[#6C5CE7]"
+            >
+              <Link2 className="h-4 w-4" />
+              Importar Extrato (.CSV / .OFX) ou Conciliar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAIS DE OPERAÇÃO — BOTTOM-SHEET NO CELULAR & MODAL NO TABLET/DESKTOP
          ===================================================================== */}
       {showAccountModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#1E1B39]/55 p-0 backdrop-blur-sm sm:items-center sm:p-4">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -4603,8 +5473,9 @@ export function NovaPlatformApp({
                 setShowAccountModal(false);
               }
             }}
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+            className="pb-safe max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl sm:p-6"
           >
+            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200 sm:hidden" />
             <h3 className="text-base font-extrabold text-[#1E1B39]">
               Cadastrar Conta ou Carteira
             </h3>
@@ -4617,7 +5488,7 @@ export function NovaPlatformApp({
                   placeholder="Ex: Conta Principal Itaú"
                   value={accName}
                   onChange={(e) => setAccName(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 />
               </div>
               <div>
@@ -4625,7 +5496,7 @@ export function NovaPlatformApp({
                 <select
                   value={accType}
                   onChange={(e) => setAccType(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   <option value="CHECKING">Conta Corrente (CHECKING)</option>
                   <option value="SAVINGS">Poupança / Reserva (SAVINGS)</option>
@@ -4638,9 +5509,10 @@ export function NovaPlatformApp({
                 </label>
                 <input
                   type="text"
+                  inputMode="decimal"
                   value={accOpeningDecimal}
                   onChange={(e) => setAccOpeningDecimal(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                 />
               </div>
             </div>
@@ -4648,13 +5520,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setShowAccountModal(false)}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
+                className="min-h-[44px] flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold sm:flex-none"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
+                className="min-h-[44px] flex-1 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white sm:flex-none"
               >
                 Salvar Conta
               </button>
@@ -4664,7 +5536,7 @@ export function NovaPlatformApp({
       )}
 
       {showTxModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#1E1B39]/55 p-0 backdrop-blur-sm sm:items-center sm:p-4">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -4689,13 +5561,14 @@ export function NovaPlatformApp({
                 setShowTxModal(false);
               }
             }}
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+            className="pb-safe max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl sm:p-6"
           >
+            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200 sm:hidden" />
             <h3 className="text-base font-extrabold text-[#1E1B39]">
               Registrar Movimentação (P01)
             </h3>
             <div className="mt-4 space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 <div>
                   <label className="font-bold">Tipo</label>
                   <select
@@ -4703,7 +5576,7 @@ export function NovaPlatformApp({
                     onChange={(e) =>
                       setTxKind(e.target.value as "INCOME" | "EXPENSE")
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   >
                     <option value="INCOME">
                       {isPJ ? "Recebimento (INCOME)" : "Receita (INCOME)"}
@@ -4718,7 +5591,7 @@ export function NovaPlatformApp({
                     onChange={(e) =>
                       setTxStatus(e.target.value as "SETTLED" | "PENDING")
                     }
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   >
                     <option value="SETTLED">Liquidado (Altera Saldo)</option>
                     <option value="PENDING">Pendente (Apenas Projeção)</option>
@@ -4730,7 +5603,7 @@ export function NovaPlatformApp({
                 <select
                   value={txAccountId}
                   onChange={(e) => setTxAccountId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -4739,13 +5612,13 @@ export function NovaPlatformApp({
                   ))}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 <div>
                   <label className="font-bold">Categoria</label>
                   <select
                     value={txCategoryId}
                     onChange={(e) => setTxCategoryId(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   >
                     <option value="">Sem categoria (Geral)</option>
                     {categories
@@ -4764,7 +5637,7 @@ export function NovaPlatformApp({
                   <select
                     value={txCounterpartyId}
                     onChange={(e) => setTxCounterpartyId(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   >
                     <option value="">Opcional</option>
                     {counterparties.map((cp) => (
@@ -4782,18 +5655,19 @@ export function NovaPlatformApp({
                   required
                   value={txDescription}
                   onChange={(e) => setTxDescription(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 />
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
                 <div>
                   <label className="font-bold">Valor Positivo (R$)</label>
                   <input
                     type="text"
+                    inputMode="decimal"
                     required
                     value={txAmountDecimal}
                     onChange={(e) => setTxAmountDecimal(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                   />
                 </div>
                 <div>
@@ -4802,7 +5676,7 @@ export function NovaPlatformApp({
                     type="date"
                     value={txDate}
                     onChange={(e) => setTxDate(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   />
                 </div>
                 <div>
@@ -4812,7 +5686,7 @@ export function NovaPlatformApp({
                     placeholder="Opcional"
                     value={txCostCenter}
                     onChange={(e) => setTxCostCenter(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   />
                 </div>
               </div>
@@ -4821,13 +5695,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setShowTxModal(false)}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
+                className="min-h-[44px] flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold sm:flex-none"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
+                className="min-h-[44px] flex-1 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white sm:flex-none"
               >
                 Confirmar
               </button>
@@ -4837,7 +5711,7 @@ export function NovaPlatformApp({
       )}
 
       {showTransferModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#1E1B39]/55 p-0 backdrop-blur-sm sm:items-center sm:p-4">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -4853,8 +5727,9 @@ export function NovaPlatformApp({
               );
               if (ok) setShowTransferModal(false);
             }}
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+            className="pb-safe max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl sm:p-6"
           >
+            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200 sm:hidden" />
             <h3 className="text-base font-extrabold text-[#1E1B39]">
               Transferência entre Contas Próprias
             </h3>
@@ -4864,7 +5739,7 @@ export function NovaPlatformApp({
                 <select
                   value={tfSourceId}
                   onChange={(e) => setTfSourceId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -4878,7 +5753,7 @@ export function NovaPlatformApp({
                 <select
                   value={tfDestId}
                   onChange={(e) => setTfDestId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -4891,9 +5766,10 @@ export function NovaPlatformApp({
                 <label className="font-bold">Valor (R$)</label>
                 <input
                   type="text"
+                  inputMode="decimal"
                   value={tfAmountDecimal}
                   onChange={(e) => setTfAmountDecimal(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                 />
               </div>
             </div>
@@ -4901,13 +5777,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setShowTransferModal(false)}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
+                className="min-h-[44px] flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold sm:flex-none"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
+                className="min-h-[44px] flex-1 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white sm:flex-none"
               >
                 Transferir
               </button>
@@ -4917,7 +5793,7 @@ export function NovaPlatformApp({
       )}
 
       {showObligationModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#1E1B39]/55 p-0 backdrop-blur-sm sm:items-center sm:p-4">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -4942,8 +5818,9 @@ export function NovaPlatformApp({
                 setShowObligationModal(false);
               }
             }}
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+            className="pb-safe max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl sm:p-6"
           >
+            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200 sm:hidden" />
             <h3 className="text-base font-extrabold text-[#1E1B39]">
               Novo Compromisso / Obrigação (P02)
             </h3>
@@ -4955,7 +5832,7 @@ export function NovaPlatformApp({
                   onChange={(e) =>
                     setObDirection(e.target.value as "PAYABLE" | "RECEIVABLE")
                   }
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   <option value="PAYABLE">Conta a Pagar (PAYABLE)</option>
                   <option value="RECEIVABLE">
@@ -4970,10 +5847,10 @@ export function NovaPlatformApp({
                   required
                   value={obTitle}
                   onChange={(e) => setObTitle(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 <div>
                   <label className="font-bold">Categoria</label>
                   <select
@@ -4984,7 +5861,7 @@ export function NovaPlatformApp({
                       const found = categories.find((c) => c.id === val);
                       if (found) setObCategory(found.name);
                     }}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   >
                     <option value="">Padrão ({obCategory || "Geral"})</option>
                     {categories
@@ -5012,7 +5889,7 @@ export function NovaPlatformApp({
                       const found = counterparties.find((cp) => cp.id === val);
                       setObCounterparty(found ? found.name : "");
                     }}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   >
                     <option value="">Opcional</option>
                     {counterparties.map((cp) => (
@@ -5023,37 +5900,39 @@ export function NovaPlatformApp({
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2.5">
                 <div>
                   <label className="font-bold">Valor Total (R$)</label>
                   <input
                     type="text"
+                    inputMode="decimal"
                     required
                     value={obTotalDecimal}
                     onChange={(e) => setObTotalDecimal(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                   />
                 </div>
                 <div>
                   <label className="font-bold">Nº de Parcelas</label>
                   <input
                     type="number"
+                    inputMode="numeric"
                     min={1}
                     max={60}
                     value={obCount}
                     onChange={(e) => setObCount(Number(e.target.value))}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 <div>
                   <label className="font-bold">1º Vencimento</label>
                   <input
                     type="date"
                     value={obFirstDue}
                     onChange={(e) => setObFirstDue(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   />
                 </div>
                 <div>
@@ -5063,7 +5942,7 @@ export function NovaPlatformApp({
                     placeholder="Opcional"
                     value={obCostCenter}
                     onChange={(e) => setObCostCenter(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   />
                 </div>
               </div>
@@ -5072,13 +5951,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setShowObligationModal(false)}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
+                className="min-h-[44px] flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold sm:flex-none"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
+                className="min-h-[44px] flex-1 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white sm:flex-none"
               >
                 Gerar Parcelas
               </button>
@@ -5088,7 +5967,7 @@ export function NovaPlatformApp({
       )}
 
       {settlementTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#1E1B39]/55 p-0 backdrop-blur-sm sm:items-center sm:p-4">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -5105,8 +5984,9 @@ export function NovaPlatformApp({
               );
               if (ok) setSettlementTarget(null);
             }}
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+            className="pb-safe max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl sm:p-6"
           >
+            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200 sm:hidden" />
             <h3 className="text-base font-extrabold text-[#1E1B39]">
               Registrar Baixa de Parcela
             </h3>
@@ -5120,7 +6000,7 @@ export function NovaPlatformApp({
                 <select
                   value={settleAccountId}
                   onChange={(e) => setSettleAccountId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -5135,10 +6015,11 @@ export function NovaPlatformApp({
                 </label>
                 <input
                   type="text"
+                  inputMode="decimal"
                   required
                   value={settleAmountDecimal}
                   onChange={(e) => setSettleAmountDecimal(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                 />
               </div>
               <div>
@@ -5147,7 +6028,7 @@ export function NovaPlatformApp({
                   type="date"
                   value={settleDate}
                   onChange={(e) => setSettleDate(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 />
               </div>
             </div>
@@ -5155,13 +6036,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setSettlementTarget(null)}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
+                className="min-h-[44px] flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold sm:flex-none"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
+                className="min-h-[44px] flex-1 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white sm:flex-none"
               >
                 Confirmar Baixa
               </button>
@@ -5171,7 +6052,7 @@ export function NovaPlatformApp({
       )}
 
       {showReserveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#1E1B39]/55 p-0 backdrop-blur-sm sm:items-center sm:p-4">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -5190,8 +6071,9 @@ export function NovaPlatformApp({
                 setShowReserveModal(false);
               }
             }}
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+            className="pb-safe max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl sm:p-6"
           >
+            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200 sm:hidden" />
             <h3 className="text-base font-extrabold text-[#1E1B39]">
               Criar Cofre de Reserva Virtual (P02)
             </h3>
@@ -5203,7 +6085,7 @@ export function NovaPlatformApp({
                   required
                   value={resName}
                   onChange={(e) => setResName(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 />
               </div>
               <div>
@@ -5211,7 +6093,7 @@ export function NovaPlatformApp({
                 <select
                   value={resKind}
                   onChange={(e) => setResKind(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                 >
                   <option value="EMERGENCY">Emergência (EMERGENCY)</option>
                   <option value="WORKING_CAPITAL">
@@ -5225,9 +6107,10 @@ export function NovaPlatformApp({
                 <label className="font-bold">Meta (R$)</label>
                 <input
                   type="text"
+                  inputMode="decimal"
                   value={resTargetDecimal}
                   onChange={(e) => setResTargetDecimal(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                 />
               </div>
             </div>
@@ -5235,13 +6118,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setShowReserveModal(false)}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
+                className="min-h-[44px] flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold sm:flex-none"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
+                className="min-h-[44px] flex-1 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white sm:flex-none"
               >
                 Criar Cofre
               </button>
@@ -5251,7 +6134,7 @@ export function NovaPlatformApp({
       )}
 
       {reserveActionModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1E1B39]/50 p-4 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#1E1B39]/55 p-0 backdrop-blur-sm sm:items-center sm:p-4">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -5282,8 +6165,9 @@ export function NovaPlatformApp({
                 if (ok) setReserveActionModal(null);
               }
             }}
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+            className="pb-safe max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl sm:p-6"
           >
+            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200 sm:hidden" />
             <h3 className="text-base font-extrabold text-[#1E1B39]">
               {reserveActionModal.mode === "ALLOCATE"
                 ? `Alocar em: ${reserveActionModal.reserve.name}`
@@ -5307,7 +6191,7 @@ export function NovaPlatformApp({
                   <select
                     value={resMoveDestId}
                     onChange={(e) => setResMoveDestId(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
+                    className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2"
                   >
                     {reserves
                       .filter((r) => r.id !== reserveActionModal.reserve.id)
@@ -5323,10 +6207,11 @@ export function NovaPlatformApp({
                 <label className="font-bold">Valor (R$)</label>
                 <input
                   type="text"
+                  inputMode="decimal"
                   required
                   value={resMoveAmountDecimal}
                   onChange={(e) => setResMoveAmountDecimal(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-slate-200 bg-[#F5F6FA] px-3 py-2 font-mono"
                 />
               </div>
             </div>
@@ -5334,13 +6219,13 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setReserveActionModal(null)}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold"
+                className="min-h-[44px] flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold sm:flex-none"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white"
+                className="min-h-[44px] flex-1 rounded-xl bg-[#6C5CE7] px-4 py-2 text-xs font-bold text-white sm:flex-none"
               >
                 Confirmar Operação Virtual
               </button>
