@@ -1432,8 +1432,8 @@ export function NovaIntelligenceP04View({
                 </pre>
               </div>
             ) : (
-              <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
-                <table className="w-full text-left text-xs">
+              <div className="nova-scroll-x mt-4 rounded-xl border border-slate-200">
+                <table className="min-w-[540px] w-full text-left text-xs">
                   <thead className="bg-[#F5F6FA] text-[10px] font-bold uppercase text-slate-500">
                     <tr>
                       <th className="px-3 py-2">ID Externo</th>
@@ -1536,9 +1536,9 @@ export function NovaIntelligenceP04View({
                     key={b.id}
                     className="rounded-xl border border-slate-200/80 bg-[#F5F6FA] p-3.5 text-xs"
                   >
-                    <div className="flex items-center justify-between font-bold text-[#141726]">
-                      <span>{b.fileName}</span>
-                      <span className="rounded bg-[#EFE9FF] px-2 py-0.5 font-mono text-[10px] text-[#6D28D9]">
+                    <div className="flex min-w-0 items-center justify-between gap-2 font-bold text-[#141726]">
+                      <span className="min-w-0 truncate">{b.fileName}</span>
+                      <span className="shrink-0 rounded bg-[#EFE9FF] px-2 py-0.5 font-mono text-[10px] text-[#6D28D9]">
                         {b.sourceKind || b.sourceType || "CSV"}
                       </span>
                     </div>
@@ -1732,7 +1732,7 @@ export function NovaIntelligenceP04View({
           </div>
 
           {/* Versão Tablet & Desktop (>=768px): Tabela Completa */}
-          <div className="mt-4 hidden overflow-x-auto md:block">
+          <div className="nova-scroll-x mt-4 hidden md:block">
             <table className="w-full text-left text-xs">
               <thead className="border-b border-slate-200 bg-[#F5F6FA] text-[10px] font-bold uppercase text-slate-500">
                 <tr>

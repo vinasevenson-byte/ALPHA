@@ -1150,22 +1150,22 @@ export function NovaInvestmentsP03View({
                         )}
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2 rounded-xl bg-[#F5F6FA] p-2.5 text-[11px]">
-                        <div>
+                      <div className="grid grid-cols-1 gap-2 rounded-xl bg-[#F5F6FA] p-2.5 text-[11px] min-[380px]:grid-cols-3">
+                        <div className="min-w-0">
                           <span className="block text-[10px] text-slate-500">Custo</span>
-                          <strong className="font-mono text-slate-700">
+                          <strong className="block break-words font-mono text-slate-700">
                             {formatBRL(Math.round(pos.costBasisReais * 100))}
                           </strong>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <span className="block text-[10px] text-slate-500">Bruto</span>
-                          <strong className="font-mono text-[#1E1B39]">
+                          <strong className="block break-words font-mono text-[#1E1B39]">
                             {formatBRL(Math.round(pos.currentGrossReais * 100))}
                           </strong>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <span className="block text-[10px] text-[#6C5CE7]">Líq. Est.</span>
-                          <strong className="font-mono text-[#6C5CE7]">
+                          <strong className="block break-words font-mono text-[#6C5CE7]">
                             {formatBRL(Math.round(netVal * 100))}
                           </strong>
                         </div>
@@ -1263,7 +1263,7 @@ export function NovaInvestmentsP03View({
             </div>
 
             {/* Versão Tablet & Desktop (>=768px): Tabela Completa */}
-            <div className="hidden overflow-x-auto md:block">
+            <div className="nova-scroll-x hidden md:block">
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-slate-200/80 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                   <tr>

@@ -692,6 +692,19 @@ export function NovaPlatformApp({
     loadAuthProfile();
   }, [loadAuthProfile, activeRoute]);
 
+  // Permite fechar painéis móveis com Escape, sem interferir nos dados.
+  useEffect(() => {
+    if (!mobileMenuOpen && !showQuickActionSheet) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMobileMenuOpen(false);
+        setShowQuickActionSheet(false);
+      }
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [mobileMenuOpen, showQuickActionSheet]);
+
   const handleLogout = async () => {
     try {
       await fetch("/api/auth/logout", {
@@ -927,7 +940,7 @@ export function NovaPlatformApp({
 
   // Renderizador do Menu Lateral (usado no Desktop e no Drawer Mobile)
   const renderSidebarNav = (isCompactMode: boolean) => (
-    <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4 text-xs">
+    <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-3 py-4 text-xs">
       {/* 1. Visão Geral */}
       <button
         onClick={() => navigateRoute("visao-geral")}
@@ -1415,7 +1428,7 @@ export function NovaPlatformApp({
   );
 
   return (
-    <div className="flex min-h-[100dvh] bg-[#F5F6FA] pb-24 text-[#1E1B39] md:pb-0">
+    <div className="flex min-h-[100dvh] min-w-0 max-w-full bg-[#F5F6FA] pb-[calc(6rem+env(safe-area-inset-bottom))] text-[#1E1B39] md:pb-0">
       {/* =====================================================================
           RAIL VERTICAL PARA TABLET RETRATO (768px–1023px | iPad & Android Tablet)
          ===================================================================== */}
@@ -1536,12 +1549,12 @@ export function NovaPlatformApp({
 
       {/* Drawer Completo para Celular e Tablet */}
       {mobileMenuOpen && (
-        <div className="fixed inset-0 z-50 flex lg:hidden">
+        <div className="fixed inset-0 z-50 flex lg:hidden" role="dialog" aria-modal="true" aria-label="Menu principal">
           <div
             className="fixed inset-0 bg-[#1E1B39]/45 backdrop-blur-xs"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <div className="pt-safe pb-safe relative z-10 flex h-[100dvh] w-[86vw] max-w-xs flex-col bg-white shadow-2xl">
+          <div className="pt-safe pb-safe relative z-10 flex h-[100dvh] w-[min(86vw,22rem)] max-w-full flex-col overflow-hidden bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-100 p-4">
               <div className="flex items-center gap-2.5">
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#6C5CE7] font-black text-white">
@@ -1559,7 +1572,7 @@ export function NovaPlatformApp({
               <button
                 onClick={() => setMobileMenuOpen(false)}
                 aria-label="Fechar menu"
-                className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F5F6FA] text-slate-600"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#F5F6FA] text-slate-600"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -1637,16 +1650,17 @@ export function NovaPlatformApp({
       {/* =====================================================================
           CONTEÚDO PRINCIPAL (FUNDO CINZA SUAVE #F5F6FA + CARTÕES BRANCOS)
          ===================================================================== */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 max-w-full flex-1 flex-col">
         {/* Topbar Oficial NOVA Adaptativa para Celular, Tablet e Desktop */}
         <header className="pt-safe sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 px-3 py-2.5 backdrop-blur sm:px-6 sm:py-3">
-          <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-2">
+          <div className="mx-auto flex w-full min-w-0 max-w-[1440px] items-center justify-between gap-1.5 sm:gap-2">
             {/* Esquerda: Menu Mobile + Alternância PF/PJ compacta no celular + Pilares no Tablet/Desktop */}
             <div className="flex min-w-0 items-center gap-2">
               <button
                 onClick={() => setMobileMenuOpen(true)}
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-[#F5F6FA] text-[#1E1B39] active:scale-95 md:hidden"
                 aria-label="Abrir menu"
+                aria-expanded={mobileMenuOpen}
               >
                 <Menu className="h-5 w-5" />
               </button>
@@ -1688,7 +1702,7 @@ export function NovaPlatformApp({
               </div>
 
               {/* Seletor Pessoal vs Empresarial (Compacto no Celular, Completo no Tablet/Desktop) */}
-              <div className="inline-flex items-center rounded-xl bg-[#F5F6FA] p-1 ring-1 ring-slate-200/80">
+              <div className="inline-flex min-w-0 max-w-[42vw] items-center overflow-x-auto rounded-xl bg-[#F5F6FA] p-1 ring-1 ring-slate-200/80 sm:max-w-none">
                 {workspaces.map((ws) => {
                   const active = ws.id === activeWorkspace.id;
                   return (
@@ -1754,7 +1768,7 @@ export function NovaPlatformApp({
             </div>
 
             {/* Direita: Busca Touch, Alertas, Lançamento Rápido e Sair */}
-            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <div className="flex shrink-0 items-center gap-1 sm:gap-2">
               <div className="relative hidden lg:block">
                 <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
                 <input
@@ -1774,6 +1788,7 @@ export function NovaPlatformApp({
                     : "border-slate-200/80 bg-[#F5F6FA] text-[#1E1B39]"
                 }`}
                 aria-label="Pesquisar"
+                aria-expanded={mobileSearchOpen}
                 title="Pesquisar lançamentos"
               >
                 <Search className="h-4 w-4" />
@@ -1794,10 +1809,10 @@ export function NovaPlatformApp({
 
               <button
                 onClick={() => setShowQuickActionSheet(true)}
-                className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-[#6C5CE7] px-3 text-xs font-bold text-white shadow-xs transition hover:bg-[#5849BE] active:scale-95 md:hidden"
+                className="inline-flex h-10 min-w-10 items-center justify-center gap-1 rounded-xl bg-[#6C5CE7] px-2 text-xs font-bold text-white shadow-xs transition hover:bg-[#5849BE] active:scale-95 sm:px-3 md:hidden"
               >
                 <Plus className="h-4 w-4" />
-                <span>Ações</span>
+                <span className="hidden min-[380px]:inline">Ações</span>
               </button>
 
               <button
@@ -1948,7 +1963,7 @@ export function NovaPlatformApp({
         </div>
 
         {/* Área Principal Max-Width 1440px */}
-        <main className="mx-auto w-full max-w-[1440px] flex-1 space-y-6 px-4 py-4 sm:px-6">
+        <main className="mx-auto w-full min-w-0 max-w-[1440px] flex-1 space-y-6 px-3 py-4 sm:px-6">
           {/* =================================================================
               TELA 1: VISÃO GERAL — ESTRUTURA OFICIAL NOVA (GLOBAL PREDICTIONS)
              ================================================================= */}
@@ -2044,7 +2059,7 @@ export function NovaPlatformApp({
                       <Wallet className="h-4 w-4" />
                     </span>
                   </div>
-                  <div className="mt-3 font-mono text-2xl font-black tabular-nums text-white sm:text-3xl">
+                  <div className="mt-3 break-words font-mono text-xl font-black tabular-nums text-white min-[380px]:text-2xl sm:text-3xl">
                     {formatBRL(netWorthCents)}
                   </div>
                   <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1 text-xs text-violet-100">
@@ -2802,7 +2817,7 @@ export function NovaPlatformApp({
                 </div>
 
                 {/* Versão Tablet & Desktop (>=768px): Tabela Analítica Completa */}
-                <div className="hidden overflow-x-auto md:block">
+                <div className="nova-scroll-x hidden md:block">
                   <table className="w-full text-left text-xs">
                     <thead className="border-b border-slate-200/80 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                       <tr>
@@ -3486,7 +3501,7 @@ export function NovaPlatformApp({
                 </div>
 
                 {/* Versão Tablet & Desktop (>=768px): Tabela Completa */}
-                <div className="hidden overflow-x-auto md:block">
+                <div className="nova-scroll-x hidden md:block">
                   <table className="w-full text-left text-xs">
                     <thead className="border-b border-slate-200/80 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                       <tr>
@@ -4144,7 +4159,7 @@ export function NovaPlatformApp({
                 </div>
 
                 {/* Versão Tablet & Desktop (>=768px): Tabela Analítica */}
-                <div className="mt-4 hidden max-h-96 overflow-y-auto md:block">
+                <div className="mt-4 hidden max-h-96 min-w-0 overflow-auto overscroll-contain md:block">
                   <table className="w-full text-left text-xs">
                     <thead className="border-b border-slate-200/80 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                       <tr>
@@ -4729,7 +4744,7 @@ export function NovaPlatformApp({
                 </div>
 
                 {/* Versão Tablet & Desktop (>=768px): Tabela Completa */}
-                <div className="mt-4 hidden overflow-x-auto md:block">
+                <div className="nova-scroll-x mt-4 hidden md:block">
                   <table className="w-full text-left text-xs">
                     <thead className="border-b border-slate-200 bg-[#F5F6FA] text-[11px] font-bold uppercase text-slate-500">
                       <tr>
@@ -5192,7 +5207,7 @@ export function NovaPlatformApp({
           BARRA DE NAVEGAÇÃO INFERIOR NATIVA PARA CELULAR (<768px | SAFE AREA)
           Em Tablets (>=768px) a navegação usa o Rail Vertical dedicado à esquerda
          ===================================================================== */}
-      <nav className="pb-safe fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t border-slate-200/90 bg-white/95 px-2 pt-1.5 backdrop-blur-md md:hidden">
+      <nav className="nova-bottom-safe fixed bottom-0 left-0 right-0 z-40 flex min-w-0 items-center justify-around border-t border-slate-200/90 bg-white/95 px-1 pt-1.5 backdrop-blur-md sm:px-2 md:hidden">
         <button
           onClick={() => navigateRoute("visao-geral")}
           className={`flex min-h-[46px] flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1 text-[10px] font-bold transition ${
@@ -5268,10 +5283,13 @@ export function NovaPlatformApp({
       {showQuickActionSheet && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-[#1E1B39]/55 backdrop-blur-sm sm:items-center sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Ações rápidas"
           onClick={() => setShowQuickActionSheet(false)}
         >
           <div
-            className="pb-safe max-h-[88dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl sm:p-6"
+            className="pb-safe max-h-[88dvh] min-w-0 w-full max-w-md overflow-y-auto overscroll-contain rounded-t-3xl bg-white p-4 shadow-2xl sm:rounded-2xl sm:p-6"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200 sm:hidden" />
@@ -5287,14 +5305,14 @@ export function NovaPlatformApp({
               <button
                 type="button"
                 onClick={() => setShowQuickActionSheet(false)}
-                className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F5F6FA] text-slate-600"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#F5F6FA] text-slate-600"
                 aria-label="Fechar"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-2.5 text-left text-xs">
+            <div className="mt-4 grid grid-cols-2 gap-2 text-left text-xs min-[380px]:gap-2.5">
               <button
                 type="button"
                 onClick={() => {

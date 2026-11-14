@@ -15,26 +15,50 @@ html {
   -webkit-tap-highlight-color: transparent;
   -webkit-text-size-adjust: 100%;
   scroll-behavior: smooth;
+  overflow-x: clip;
 }
 
 body {
-  background-color: #F5F6FA;
-  color: #1E1B39;
+  min-width: 0;
+  margin: 0;
+  background-color: var(--nova-bg);
+  color: var(--nova-ink);
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   overflow-x: clip;
-  overscroll-behavior-y: none;
+  /* Mantém a rolagem vertical nativa e o gesto de atualizar a página. */
 }
 
-img {
+img,
+video,
+canvas,
+svg {
   max-width: 100%;
+}
+
+img,
+video {
   height: auto;
+}
+
+/* Impede que componentes flex/grid forcem largura excessiva. */
+.nova-min-w-0 {
+  min-width: 0;
+}
+
+/* Rolagem localizada para tabelas e áreas largas, sem cortar dados. */
+.nova-scroll-x {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
 
-/* Safe-area utilities para iPhone, iPad e Android com barra de gestos */
+/* Safe areas para barras de sistema e recortes de tela. */
 .pt-safe {
   padding-top: env(safe-area-inset-top, 0px);
 }
@@ -55,7 +79,12 @@ img {
   margin-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Ocultar scrollbar mantendo rolagem horizontal por toque em abas/chips */
+/* Para barras inferiores fixas que já têm padding próprio. */
+.nova-bottom-safe {
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Ocultar a barra visual sem desativar o gesto de rolagem. */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -65,7 +94,20 @@ img {
   scrollbar-width: none;
 }
 
-/* Evita zoom automático indesejado no Safari iOS / Chrome Mobile ao focar campos */
+/* Foco visível para navegação por teclado e tecnologias assistivas. */
+:where(a, button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--nova-purple);
+  outline-offset: 3px;
+}
+
+/* Reduz animações para usuários que solicitaram menos movimento. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* Evita o zoom automático no foco de campos em iPhones. */
 @media (max-width: 767px) {
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
   select,
@@ -74,7 +116,7 @@ img {
   }
 }
 
-/* Scrollbar sutil NOVA para Tablet/Desktop */
+/* Scrollbar sutil NOVA em dispositivos com tela maior. */
 @media (min-width: 768px) {
   ::-webkit-scrollbar {
     width: 6px;
@@ -91,6 +133,6 @@ img {
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #6C5CE7;
+    background: var(--nova-purple);
   }
 }
