@@ -1,12 +1,18 @@
 import type { MetadataRoute } from "next";
 
+/**
+ * Manifesto PWA do ALPHA/NOVA (sem cache offline de dados financeiros).
+ * O endereço / mantém o fluxo de autenticação e redirecionamento existente.
+ */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "NOVA — Inteligência Financeira (PF & PJ)",
+    id: "/",
+    name: "ALPHA / NOVA — Inteligência Financeira (PF & PJ)",
     short_name: "NOVA",
     description:
-      "Plataforma de gestão financeira, planejamento, reservas e investimentos para Celular, Tablet e Desktop.",
+      "Plataforma de gestão e inteligência financeira ALPHA/NOVA para Celular, Tablet e Desktop.",
     start_url: "/",
+    scope: "/",
     display: "standalone",
     orientation: "any",
     background_color: "#F5F6FA",
@@ -15,15 +21,22 @@ export default function manifest(): MetadataRoute.Manifest {
     categories: ["finance", "business", "productivity"],
     icons: [
       {
-        src: "/icon",
+        src: "/nova-icon-192.png",
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "any",
+      },
+      {
+        src: "/nova-icon-512.png",
         sizes: "512x512",
         type: "image/png",
         purpose: "any",
       },
       {
-        src: "/apple-icon",
-        sizes: "180x180",
+        src: "/nova-maskable-512.png",
+        sizes: "512x512",
         type: "image/png",
+        purpose: "maskable",
       },
     ],
   };
