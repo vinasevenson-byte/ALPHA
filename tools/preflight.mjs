@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 const root = process.argv[2] || process.cwd();
 const issues = [];
@@ -11,7 +12,16 @@ else {
   if (/provider\s*=\s*"sqlite"/.test(schema)) issues.push('Prisma ainda utiliza SQLite, incompatível com persistência confiável em Vercel Functions');
   if (!/provider\s*=\s*"postgresql"/.test(schema)) issues.push('Prisma não configurado para PostgreSQL');
 }
-if (existsSync(join(root,'.env'))) issues.push('Arquivo .env na raiz: confirme que foi removido do controle de versão');
+if (existsSync(join(root,'.env'))) {
+  let trackedInGit = false;
+  try {
+    execFileSync('git', ['ls-files', '--error-unmatch', '.env'], { cwd: root, stdio: 'ignore' });
+    trackedInGit = true;
+  } catch {
+    trackedInGit = false;
+  }
+  if (trackedInGit) issues.push('Arquivo .env na raiz está rastreado no Git: remova do controle de versão');
+}
 if (!pkg.scripts?.['db:migrate:deploy']) issues.push('Falta script db:migrate:deploy');
 if (issues.length) { console.error('NOVA P08 — Pré-implantação BLOQUEADA\n'+issues.map(x=>' - '+x).join('\n'));process.exitCode=1; }
 else console.log('NOVA P08 — Verificações estáticas aprovadas. Ainda requer build e testes reais.');
