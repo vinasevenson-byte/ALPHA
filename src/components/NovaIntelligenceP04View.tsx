@@ -423,7 +423,7 @@ export function NovaIntelligenceP04View({
           </div>
 
           {/* Sub-abas da Inteligência Financeira */}
-          <div className="no-scrollbar -mx-1 mt-4 flex flex-nowrap gap-1.5 overflow-x-auto px-1 pb-1 sm:mx-0 sm:flex-wrap sm:px-0 sm:pb-0">
+          <div className="mt-4 grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:gap-1.5">
             {[
               {
                 key: "visao" as P04IntelSubTab,
@@ -452,14 +452,14 @@ export function NovaIntelligenceP04View({
                 <button
                   key={tab.key}
                   onClick={() => setIntelTab(tab.key)}
-                  className={`inline-flex min-h-[38px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl px-3.5 py-2 text-xs font-bold transition active:scale-[0.98] ${
+                  className={`flex min-h-11 min-w-0 w-full items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-center text-[11px] font-bold transition active:scale-[0.98] sm:inline-flex sm:min-h-[38px] sm:w-auto sm:px-3.5 sm:text-xs sm:whitespace-nowrap ${
                     active
                       ? "bg-[#6D28D9] text-white shadow-sm"
                       : "bg-[#F5F6FA] text-[#5B6275] hover:bg-[#EFE9FF] hover:text-[#6D28D9]"
                   }`}
                 >
                   <Icon className="h-3.5 w-3.5 shrink-0" />
-                  {tab.label}
+                  <span className="truncate sm:overflow-visible">{tab.label}</span>
                 </button>
               );
             })}
@@ -1213,7 +1213,7 @@ export function NovaIntelligenceP04View({
         </div>
 
         {/* Sub-abas de Integrações */}
-        <div className="no-scrollbar -mx-1 mt-4 flex flex-nowrap gap-1.5 overflow-x-auto px-1 pb-1 sm:mx-0 sm:flex-wrap sm:px-0 sm:pb-0">
+        <div className="mt-4 grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:gap-1.5">
           {[
             {
               key: "conexoes" as P04IntegrationSubTab,
@@ -1242,14 +1242,14 @@ export function NovaIntelligenceP04View({
               <button
                 key={tab.key}
                 onClick={() => setIntegrationTab(tab.key)}
-                className={`inline-flex min-h-[38px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl px-3.5 py-2 text-xs font-bold transition active:scale-[0.98] ${
+                className={`flex min-h-11 min-w-0 w-full items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-center text-[11px] font-bold transition active:scale-[0.98] sm:inline-flex sm:min-h-[38px] sm:w-auto sm:px-3.5 sm:text-xs sm:whitespace-nowrap ${
                   active
                     ? "bg-[#6D28D9] text-white shadow-sm"
                     : "bg-[#F5F6FA] text-[#5B6275] hover:bg-[#EFE9FF] hover:text-[#6D28D9]"
                 }`}
               >
                 <Icon className="h-3.5 w-3.5 shrink-0" />
-                {tab.label}
+                <span className="truncate sm:overflow-visible">{tab.label}</span>
               </button>
             );
           })}
